@@ -16,6 +16,7 @@ int main(int argc, char* argv[])
     {
         syslog(LOG_ERR, "Expected 2 arguments, got %i\n", nargs);
         printf("Expected 2 arguments, got %i\n", nargs);
+        closelog();
         return 1;
     }
     
@@ -27,6 +28,7 @@ int main(int argc, char* argv[])
         perror("Error creating file: ");
         syslog(LOG_ERR, "Could not create file.");
         printf("Error creating file. Errno = %i\n", error_nbr);
+        closelog();
         return 1;
     }
     else
@@ -38,7 +40,16 @@ int main(int argc, char* argv[])
 
     char* text = argv[2];
     size_t len = strlen(text);
-    write(fd, text, len);
+    int write_result = write(fd, text, len);
+    if (write_result == -1)
+    {
+        int error_nbr = errno;
+        perror("Error writing to file file: ");
+        syslog(LOG_ERR, "Could not write to file %s", filename);
+        printf("Error writing to file. Errno = %i\n", error_nbr);
+        closelog();
+    }
     close(fd);
+    closelog();
     return 0;
 }
