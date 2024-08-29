@@ -32,6 +32,7 @@ int main(int argc, char* argv[])
     else
     {
         printf("Successfully created file: %s\n", filename);
+        syslog(LOG_INFO, "Successfully created file: %s\n", filename);
     }
 
 
