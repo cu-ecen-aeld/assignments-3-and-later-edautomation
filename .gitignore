@@ -6,3 +6,4 @@ crosstool-ng
 aesd-build
 .vscode/
 test.sh.log
+*my_written_file.txt
