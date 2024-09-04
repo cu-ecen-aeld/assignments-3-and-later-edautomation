@@ -1,6 +1,8 @@
 #include "systemcalls.h"
 
+#include <fcntl.h>
 #include <stdlib.h>
+#include <sys/stat.h>
 #include <sys/types.h>
 #include <sys/wait.h>
 #include <unistd.h>
@@ -87,13 +89,10 @@ bool do_exec(int count, ...)
     }
     else if (0 == pid)  // Child process
     {
-        int ret = execv(command[0], command);
-        if (-1 == ret)
-        {
-            printf("Could not execute command");
-            perror("execv");
-            exit(EXIT_FAILURE);
-        }
+        (void)execv(command[0], command);
+        printf("Could not execute command");
+        perror("execv");
+        exit(EXIT_FAILURE);
     }
     else if (-1 == pid)
     {
@@ -137,7 +136,47 @@ bool do_exec_redirect(const char* outputfile, int count, ...)
      *
      */
 
+    bool success = false;
+    int fd = open(outputfile, O_WRONLY | O_CREAT | O_TRUNC, 0644);
+    if (-1 != fd)
+    {
+        pid_t pid = fork();
+        if (pid > 0)  // Parent process
+        {
+            int wait_sts = 0;
+            int ret = wait(&wait_sts);
+            if ((ret == pid) && WIFEXITED(wait_sts))
+            {
+                if (WEXITSTATUS(wait_sts) != EXIT_FAILURE)
+                {
+                    success = true;
+                }
+            }
+        }
+        else if (0 == pid)  // Child process
+        {
+            static const int STDOUT_FILE_DESCRIPTOR = 1;
+            int ret = dup2(fd, STDOUT_FILE_DESCRIPTOR);
+            if (-1 != ret)
+            {
+                close(fd);
+                (void)execv(command[0], command);
+                printf("Could not execute command");
+                perror("execv");
+                exit(EXIT_FAILURE);
+            }
+        }
+        else if (-1 == pid)
+        {
+            perror("fork");
+        }
+        else
+        {
+            // ??
+        }
+    }
+    (void)close(fd);
     va_end(args);
 
-    return true;
+    return success;
 }
