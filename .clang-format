@@ -1,0 +1,42 @@
+# Format Style Options - Created with Clang Power Tools
+---
+AccessModifierOffset: -2
+AlignConsecutiveMacros: Consecutive
+AlignConsecutiveBitFields: Consecutive
+AttributeMacros: 
+  - __capability
+BasedOnStyle: google
+BraceWrapping: 
+  AfterCaseLabel: true
+  AfterClass: true
+  AfterControlStatement: true
+  AfterEnum: true
+  AfterFunction: true
+  AfterNamespace: true
+  AfterObjCDeclaration: true
+  AfterStruct: true
+  AfterUnion: true
+  AfterExternBlock: false
+  BeforeCatch: true
+  BeforeElse: true
+  IndentBraces: false
+  SplitEmptyFunction: false
+  SplitEmptyRecord: false
+  SplitEmptyNamespace: false
+  BeforeLambdaBody: false
+  BeforeWhile: false
+BreakBeforeBraces: Custom
+ColumnLimit: 0
+DerivePointerAlignment: false
+IncludeBlocks: Preserve
+IndentWidth: 4
+NamespaceIndentation: Inner
+ObjCBlockIndentWidth: 4
+PointerAlignment: Left
+SpaceAfterTemplateKeyword: false
+SpaceAroundPointerQualifiers: After
+SpacesInContainerLiterals: false
+Standard: c++17
+TabWidth: 4
+UseCRLF: true
+...
