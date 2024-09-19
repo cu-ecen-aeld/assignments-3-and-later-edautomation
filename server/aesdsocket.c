@@ -22,7 +22,7 @@ void handle_signal(int signal)
 {
     if (signal == SIGINT || signal == SIGTERM)
     {
-        printf("Got stop signal\n");
+        printf("\nGot stop signal\n");
         syslog(LOG_INFO, "Caught signal, exiting");
         stop_sig = 1;
     }
@@ -72,7 +72,7 @@ int main(int argc, char* argv[])
     int sfd;
     for (next_addr = addr; next_addr != NULL; next_addr = next_addr->ai_next)
     {
-        sfd = socket(next_addr->ai_family, next_addr->ai_socktype, next_addr->ai_protocol);
+        sfd = socket(next_addr->ai_family, next_addr->ai_socktype | SOCK_NONBLOCK, next_addr->ai_protocol);
         if (-1 != sfd)
         {
             if (0 == bind(sfd, next_addr->ai_addr, next_addr->ai_addrlen))
@@ -113,7 +113,6 @@ int main(int argc, char* argv[])
     while (!stop_sig)
     {
         // Wait for a connection
-        printf("Waiting for a connection...\n");
         struct sockaddr peer_addr;
         socklen_t length = sizeof(peer_addr);
         cfd = accept4(sfd, &peer_addr, &length, SOCK_NONBLOCK);
@@ -122,8 +121,6 @@ int main(int argc, char* argv[])
         {
             if ((err == EAGAIN) || (err == EWOULDBLOCK))
             {
-                sleep(1);
-                printf("No connection, trying again");
                 continue;
             }
             else
