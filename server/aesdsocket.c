@@ -1,3 +1,4 @@
+#define _GNU_SOURCE
 #include <stdbool.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -21,6 +22,8 @@ void handle_signal(int signal)
 {
     if (signal == SIGINT || signal == SIGTERM)
     {
+        printf("Got stop signal\n");
+        syslog(LOG_INFO, "Caught signal, exiting");
         stop_sig = 1;
     }
 }
@@ -42,6 +45,7 @@ int main(int argc, char* argv[])
     if (-1 == tmp_file_wr_fd)
     {
         syslog(LOG_ERR, "Could not create tmp file");
+        printf("Got stop signal\n");
         goto cleanup_err;
     }
     int tmp_file_rd_fd = -1;
@@ -106,129 +110,161 @@ int main(int argc, char* argv[])
         printf("Listen for connection successful\n");
     }
 
-    // // Wait for a connection
-    struct sockaddr peer_addr;
-    socklen_t length = sizeof(peer_addr);
-    cfd = accept(sfd, &peer_addr, &length);
-    if (-1 == cfd)
+    while (!stop_sig)
     {
-        syslog(LOG_ERR, "No connection accepted");
-        goto cleanup_err;
-    }
-    else
-    {
-        char host[NI_MAXHOST];
-        char serv[NI_MAXSERV];
-        int s = getnameinfo(&peer_addr, length, host, NI_MAXHOST, serv, NI_MAXSERV, 0);
-        if (0 == s)
+        // Wait for a connection
+        printf("Waiting for a connection...\n");
+        struct sockaddr peer_addr;
+        socklen_t length = sizeof(peer_addr);
+        cfd = accept4(sfd, &peer_addr, &length, SOCK_NONBLOCK);
+        int err = errno;
+        if (-1 == cfd)
         {
-            syslog(LOG_INFO, "Accepted connection from %s", host);
-            printf("Accepted from %s:%s\n", host, serv);
-        }
-        else
-        {
-            printf("Error getting info: %s\n", gai_strerror(s));
-        }
-    }
-
-    // Setup buffer to receive data
-    memset((void*)buffer, 0, sizeof(char) * BUFFER_SIZE);
-
-    // Receive data until end of packet
-    bool did_find_eol = false;
-    char tmp_buffer[BUFFER_SIZE];
-    while (!did_find_eol)
-    {
-        int len = read(cfd, buffer, BURST_SIZE);
-        if (-1 == len)
-        {
-            syslog(LOG_ERR, "Could not read stream");
-            goto cleanup_err;
-        }
-        else if (len > 0)
-        {
-            printf("Read %d bytes\n", len);
-            buffer[len] = '\0';  // For string handling functions
-            char* eol_ptr = strstr(buffer, "\n");
-            if (NULL != eol_ptr)
+            if ((err == EAGAIN) || (err == EWOULDBLOCK))
             {
-                printf("Got new line!\n");
-
-                // Copy remaining bytes to the buffer so they are not lost
-                char* remaining_string = &eol_ptr[1];
-                strcpy(tmp_buffer, remaining_string);
-
-                // Write the bytes up to the newline to the file
-                eol_ptr[1] = '\0';  // for string length
-                size_t str_len = strlen(buffer);
-                printf("Read %lu bytes until end of line\n", str_len);
-                if (-1 == write(tmp_file_wr_fd, buffer, str_len))
-                {
-                    syslog(LOG_ERR, "Could not write to tmp file");
-                    goto cleanup_err;
-                }
-
-                did_find_eol = true;
+                sleep(1);
+                printf("No connection, trying again");
+                continue;
             }
             else
             {
-                // No newline -> packet not finished -> write entire buffer to file
-                if (-1 == write(tmp_file_wr_fd, buffer, len))
-                {
-                    syslog(LOG_ERR, "Could not write to tmp file");
-                    goto cleanup_err;
-                }
+                syslog(LOG_ERR, "No connection accepted");
+                goto cleanup_err;
             }
         }
         else
         {
-            // Try again in the next loop execution
+            printf("Got connection file descriptor %d\n", cfd);
+            char host[NI_MAXHOST];
+            char serv[NI_MAXSERV];
+            int s = getnameinfo(&peer_addr, length, host, NI_MAXHOST, serv, NI_MAXSERV, 0);
+            if (0 == s)
+            {
+                syslog(LOG_INFO, "Accepted connection from %s", host);
+                printf("Accepted from %s:%s\n", host, serv);
+            }
+            else
+            {
+                printf("Error getting info: %s\n", gai_strerror(s));
+            }
         }
-    }
 
-    // Send the file's content back
-    tmp_file_rd_fd = open(filename, O_RDONLY);
-    if (-1 == tmp_file_rd_fd)
-    {
-        syslog(LOG_ERR, "Could not open tmp file for reading");
-    }
+        // Setup buffer to receive data
+        memset((void*)buffer, 0, sizeof(char) * BUFFER_SIZE);
 
-    int rd_len = 42;
-    while (rd_len != 0)
-    {
-        rd_len = read(tmp_file_rd_fd, buffer, BUFFER_SIZE);
-        if (-1 == rd_len)
+        // Receive data until end of packet
+        bool did_find_eol = false;
+        char tmp_buffer[BUFFER_SIZE];
+        while (!did_find_eol)
         {
-            syslog(LOG_ERR, "Error reading from tmp file");
-            printf("Error reading from tmp file\n");
-            goto cleanup_err;
+            int len = read(cfd, buffer, BURST_SIZE);
+            if (-1 == len)
+            {
+                int err = errno;
+                if ((err != EAGAIN) && (err != EWOULDBLOCK))
+                {
+                    perror("Could not read stream");
+                    syslog(LOG_ERR, "Could not read stream");
+                    goto cleanup_err;
+                }
+            }
+            else if (len > 0)
+            {
+                printf("Read %d bytes\n", len);
+                buffer[len] = '\0';  // For string handling functions
+                char* eol_ptr = strstr(buffer, "\n");
+                if (NULL != eol_ptr)
+                {
+                    printf("Got new line!\n");
+
+                    // Copy remaining bytes to the buffer so they are not lost
+                    char* remaining_string = &eol_ptr[1];
+                    strcpy(tmp_buffer, remaining_string);
+
+                    // Write the bytes up to the newline to the file
+                    eol_ptr[1] = '\0';  // for string length
+                    size_t str_len = strlen(buffer);
+                    printf("Read %lu bytes until end of line\n", str_len);
+                    if (-1 == write(tmp_file_wr_fd, buffer, str_len))
+                    {
+                        syslog(LOG_ERR, "Could not write to tmp file");
+                        goto cleanup_err;
+                    }
+
+                    did_find_eol = true;
+                }
+                else
+                {
+                    // No newline -> packet not finished -> write entire buffer to file
+                    if (-1 == write(tmp_file_wr_fd, buffer, len))
+                    {
+                        syslog(LOG_ERR, "Could not write to tmp file");
+                        goto cleanup_err;
+                    }
+                }
+            }
+            else
+            {
+                // Try again in the next loop execution
+            }
         }
-        if (-1 == write(cfd, buffer, rd_len))
+
+        // Send the file's content back
+        tmp_file_rd_fd = open(filename, O_RDONLY);
+        if (-1 == tmp_file_rd_fd)
         {
-            syslog(LOG_ERR, "Error sending data");
-            printf("Error reading sending data\n");
-            goto cleanup_err;
+            syslog(LOG_ERR, "Could not open tmp file for reading");
         }
-        else
+
+        while (true)
         {
+            int rd_len = read(tmp_file_rd_fd, buffer, BUFFER_SIZE);
+            if (-1 == rd_len)
+            {
+                syslog(LOG_ERR, "Error reading from tmp file");
+                printf("Error reading from tmp file\n");
+                goto cleanup_err;
+            }
+            else if (rd_len > 0)
+            {
+                while (-1 == write(cfd, buffer, rd_len))
+                {
+                    int err = errno;
+                    if ((err == EAGAIN) || (err == EWOULDBLOCK))
+                    {
+                        if (stop_sig)
+                        {
+                            break;
+                        }
+                        continue;
+                    }
+                    else
+                    {
+                        syslog(LOG_ERR, "Error sending data");
+                        printf("Error reading sending data\n");
+                        goto cleanup_err;
+                    }
+                }
+            }
+            else
+            {
+                // No more bytes...
+                printf("No more bytes to write\n");
+                break;
+            }
+
             printf("Wrote %d bytes to socket\n", rd_len);
         }
-    }
 
-    // Write stream content coming after the newline to the file
-    if (-1 == write(tmp_file_wr_fd, tmp_buffer, strlen(tmp_buffer)))
-    {
-        syslog(LOG_ERR, "Could not write to tmp file");
-        goto cleanup_err;
-    }
-
-    while (1)
-    {
-        usleep(1000);
-        if (stop_sig)
+        // Write stream content coming after the newline to the file
+        if (-1 == write(tmp_file_wr_fd, tmp_buffer, strlen(tmp_buffer)))
         {
-            break;
+            syslog(LOG_ERR, "Could not write to tmp file");
+            goto cleanup_err;
         }
+
+        printf("Closing connection\n");
+        close(cfd);
     }
 
     printf("\nExiting...\n");
@@ -238,7 +274,7 @@ int main(int argc, char* argv[])
 
     // Everything went fine
     closelog();
-    close(cfd);
+    close(sfd);
     close(tmp_file_rd_fd);
     close(tmp_file_wr_fd);
     // remove(filename);
@@ -247,6 +283,7 @@ int main(int argc, char* argv[])
 cleanup_err:
     printf("Cleaning up and returning -1\n");
     closelog();
+    close(sfd);
     close(cfd);
     close(tmp_file_rd_fd);
     close(tmp_file_wr_fd);
