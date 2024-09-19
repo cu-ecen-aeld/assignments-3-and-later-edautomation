@@ -55,7 +55,7 @@ int main(int argc, char* argv[])
     struct addrinfo* addr;
     memset((void*)&hints, 0, sizeof(struct addrinfo));
     hints.ai_flags = AI_PASSIVE;
-    hints.ai_family = AF_UNSPEC;
+    hints.ai_family = AF_INET;
     hints.ai_socktype = SOCK_STREAM;
     hints.ai_protocol = 0; /* Any protocol */
     hints.ai_canonname = NULL;
@@ -75,12 +75,20 @@ int main(int argc, char* argv[])
         sfd = socket(next_addr->ai_family, next_addr->ai_socktype | SOCK_NONBLOCK, next_addr->ai_protocol);
         if (-1 != sfd)
         {
+            if (setsockopt(sfd, SOL_SOCKET, SO_REUSEADDR, &(int){1}, sizeof(int)) < 0)
+            {
+                perror("setsockopt(SO_REUSEADDR) failed");
+            }
             if (0 == bind(sfd, next_addr->ai_addr, next_addr->ai_addrlen))
             {
                 syslog(LOG_USER, "Bind successful");
                 printf("Bind successful\n");
 
                 break; /* Success */
+            }
+            else
+            {
+                perror("Could not bind");
             }
             close(sfd);
         }
@@ -89,13 +97,25 @@ int main(int argc, char* argv[])
             printf("Could not create socket, trying the next addr\n");
         }
     }
-
     freeaddrinfo(addr);  // No longer needed
     if (NULL == next_addr)
     {
         fprintf(stderr, "Could not bind\n");
         syslog(LOG_ERR, "Could not bind");
         goto cleanup_err;
+    }
+
+    if ((argc == 2) && (0 == strcmp(argv[1], "-d")))
+    {
+        // Start as a deamon:
+        pid_t pid = fork();
+        if (pid > 0)
+        {
+            printf("Parent, exiting");
+
+            // parent
+            goto normal_exit;
+        }
     }
 
     // Listen for connection on the socket
@@ -262,8 +282,10 @@ int main(int argc, char* argv[])
 
         printf("Closing connection\n");
         close(cfd);
+        close(tmp_file_rd_fd);
     }
 
+normal_exit:
     printf("\nExiting...\n");
 
     // Clean-up for next packet
@@ -272,6 +294,7 @@ int main(int argc, char* argv[])
     // Everything went fine
     closelog();
     close(sfd);
+    close(cfd);
     close(tmp_file_rd_fd);
     close(tmp_file_wr_fd);
     // remove(filename);
