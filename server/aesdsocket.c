@@ -18,13 +18,86 @@
 
 volatile __sig_atomic_t stop_sig;
 
-void handle_signal(int signal)
+static int sfd = -1;  // Socket file descriptor
+static int cfd = -1;  // Connection file descriptor
+static int wfd = -1;  // Write temporary file descriptor
+static int rfd = -1;  // Read temporary file descriptor
+
+static struct addrinfo* addr = NULL;
+
+static inline void close_files()
+{
+    close(sfd);
+    close(cfd);
+    close(wfd);
+    close(rfd);
+}
+
+static inline void cleanup_memory()
+{
+    if (NULL != addr)
+    {
+        freeaddrinfo(addr);
+        addr = NULL;
+    }
+}
+
+static inline void terminate_normally()
+{
+    printf("Terminating normally\n");
+    cleanup_memory();
+    close_files();
+    exit(EXIT_SUCCESS);
+}
+
+static inline void terminate_with_error()
+{
+    printf("Terminating because of an error\n");
+    cleanup_memory();
+    close_files();
+    exit(-1);
+}
+
+static void start_deamon_if_needed(int argc, char* argv[])
+{
+    if ((argc == 2) && (0 == strcmp(argv[1], "-d")))
+    {
+        // Start as a deamon:
+        pid_t pid = fork();
+        if (pid > 0)
+        {
+            printf("Started deamon with pid %d, exiting\n", pid);
+            syslog(LOG_INFO, "Started deamon with pid %d", pid);
+            terminate_normally();
+        }
+        else if (pid < 0)
+        {
+            perror("Could not start deamon");
+            syslog(LOG_ERR, "Could not start deamon");
+        }
+        else
+        {
+            printf("Running as deamon...\n");
+
+            (void)setsid();
+            chdir("/");
+            close(STDIN_FILENO);
+            close(STDOUT_FILENO);
+            close(STDERR_FILENO);
+            open("/dev/null", O_RDONLY);
+            open("/dev/null", O_RDWR);
+            open("/dev/null", O_RDWR);
+        }
+    }
+}
+
+static void handle_signal(int signal)
 {
     if (signal == SIGINT || signal == SIGTERM)
     {
-        printf("\nGot stop signal\n");
-        syslog(LOG_INFO, "Caught signal, exiting");
-        stop_sig = 1;
+        printf("\nGot SIGINT or SIGTERM\n");
+        syslog(LOG_INFO, "Caught SIGINT or SIGTERM, exiting");
+        terminate_normally();
     }
 }
 
@@ -35,24 +108,20 @@ int main(int argc, char* argv[])
 
     openlog("aesdsocketsyslog", 0, LOG_USER);
 
-    // Declared here so we can close them at the end regardless of the success of the program
-    int cfd = -1;
     char buffer[BUFFER_SIZE];
 
     // Create the log file
     char* filename = "/var/tmp/aesdsocketdata";
-    int tmp_file_wr_fd = creat(filename, 0644);
-    if (-1 == tmp_file_wr_fd)
+    wfd = creat(filename, 0644);
+    if (-1 == wfd)
     {
         syslog(LOG_ERR, "Could not create tmp file");
         printf("Got stop signal\n");
-        goto cleanup_err;
+        terminate_with_error();
     }
-    int tmp_file_rd_fd = -1;
 
     // Get the address
     struct addrinfo hints;
-    struct addrinfo* addr;
     memset((void*)&hints, 0, sizeof(struct addrinfo));
     hints.ai_flags = AI_PASSIVE;
     hints.ai_family = AF_INET;
@@ -65,11 +134,10 @@ int main(int argc, char* argv[])
     if (0 != status)
     {
         syslog(LOG_ERR, "Could not get address info: %s", gai_strerror(status));
-        goto cleanup_err;
+        terminate_with_error();
     }
 
     struct addrinfo* next_addr;
-    int sfd;
     for (next_addr = addr; next_addr != NULL; next_addr = next_addr->ai_next)
     {
         sfd = socket(next_addr->ai_family, next_addr->ai_socktype | SOCK_NONBLOCK, next_addr->ai_protocol);
@@ -84,7 +152,7 @@ int main(int argc, char* argv[])
                 syslog(LOG_USER, "Bind successful");
                 printf("Bind successful\n");
 
-                break; /* Success */
+                break;  // Success
             }
             else
             {
@@ -98,31 +166,21 @@ int main(int argc, char* argv[])
         }
     }
     freeaddrinfo(addr);  // No longer needed
+    addr = NULL;
     if (NULL == next_addr)
     {
         fprintf(stderr, "Could not bind\n");
         syslog(LOG_ERR, "Could not bind");
-        goto cleanup_err;
+        terminate_with_error();
     }
 
-    if ((argc == 2) && (0 == strcmp(argv[1], "-d")))
-    {
-        // Start as a deamon:
-        pid_t pid = fork();
-        if (pid > 0)
-        {
-            printf("Parent, exiting");
-
-            // parent
-            goto normal_exit;
-        }
-    }
+    start_deamon_if_needed(argc, argv);
 
     // Listen for connection on the socket
     if (-1 == listen(sfd, 42))
     {
         syslog(LOG_ERR, "Could not listen for connection on the socket");
-        goto cleanup_err;
+        terminate_with_error();
     }
     else
     {
@@ -146,7 +204,7 @@ int main(int argc, char* argv[])
             else
             {
                 syslog(LOG_ERR, "No connection accepted");
-                goto cleanup_err;
+                terminate_with_error();
             }
         }
         else
@@ -182,7 +240,7 @@ int main(int argc, char* argv[])
                 {
                     perror("Could not read stream");
                     syslog(LOG_ERR, "Could not read stream");
-                    goto cleanup_err;
+                    terminate_with_error();
                 }
             }
             else if (len > 0)
@@ -202,10 +260,10 @@ int main(int argc, char* argv[])
                     eol_ptr[1] = '\0';  // for string length
                     size_t str_len = strlen(buffer);
                     printf("Read %lu bytes until end of line\n", str_len);
-                    if (-1 == write(tmp_file_wr_fd, buffer, str_len))
+                    if (-1 == write(wfd, buffer, str_len))
                     {
                         syslog(LOG_ERR, "Could not write to tmp file");
-                        goto cleanup_err;
+                        terminate_with_error();
                     }
 
                     did_find_eol = true;
@@ -213,10 +271,10 @@ int main(int argc, char* argv[])
                 else
                 {
                     // No newline -> packet not finished -> write entire buffer to file
-                    if (-1 == write(tmp_file_wr_fd, buffer, len))
+                    if (-1 == write(wfd, buffer, len))
                     {
                         syslog(LOG_ERR, "Could not write to tmp file");
-                        goto cleanup_err;
+                        terminate_with_error();
                     }
                 }
             }
@@ -227,20 +285,20 @@ int main(int argc, char* argv[])
         }
 
         // Send the file's content back
-        tmp_file_rd_fd = open(filename, O_RDONLY);
-        if (-1 == tmp_file_rd_fd)
+        rfd = open(filename, O_RDONLY);
+        if (-1 == rfd)
         {
             syslog(LOG_ERR, "Could not open tmp file for reading");
         }
 
         while (true)
         {
-            int rd_len = read(tmp_file_rd_fd, buffer, BUFFER_SIZE);
+            int rd_len = read(rfd, buffer, BUFFER_SIZE);
             if (-1 == rd_len)
             {
                 syslog(LOG_ERR, "Error reading from tmp file");
                 printf("Error reading from tmp file\n");
-                goto cleanup_err;
+                terminate_with_error();
             }
             else if (rd_len > 0)
             {
@@ -259,7 +317,7 @@ int main(int argc, char* argv[])
                     {
                         syslog(LOG_ERR, "Error sending data");
                         printf("Error reading sending data\n");
-                        goto cleanup_err;
+                        terminate_with_error();
                     }
                 }
             }
@@ -274,39 +332,19 @@ int main(int argc, char* argv[])
         }
 
         // Write stream content coming after the newline to the file
-        if (-1 == write(tmp_file_wr_fd, tmp_buffer, strlen(tmp_buffer)))
+        if (-1 == write(wfd, tmp_buffer, strlen(tmp_buffer)))
         {
             syslog(LOG_ERR, "Could not write to tmp file");
-            goto cleanup_err;
+            terminate_with_error();
         }
 
         printf("Closing connection\n");
         close(cfd);
-        close(tmp_file_rd_fd);
+        close(rfd);
     }
-
-normal_exit:
-    printf("\nExiting...\n");
 
     // Clean-up for next packet
     memset((void*)buffer, 0, sizeof(char) * BUFFER_SIZE);
 
-    // Everything went fine
-    closelog();
-    close(sfd);
-    close(cfd);
-    close(tmp_file_rd_fd);
-    close(tmp_file_wr_fd);
-    // remove(filename);
-    return 0;
-
-cleanup_err:
-    printf("Cleaning up and returning -1\n");
-    closelog();
-    close(sfd);
-    close(cfd);
-    close(tmp_file_rd_fd);
-    close(tmp_file_wr_fd);
-    // remove(filename);
-    return -1;
+    terminate_normally();
 }
