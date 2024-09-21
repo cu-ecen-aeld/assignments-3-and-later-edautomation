@@ -60,26 +60,26 @@ static inline void terminate_with_error(void)
     exit(-1);
 }
 
-static void start_deamon_if_needed(int argc, char* argv[])
+static void start_daemon_if_needed(int argc, char* argv[])
 {
     if ((argc == 2) && (0 == strcmp(argv[1], "-d")))
     {
-        // Start as a deamon:
+        // Start as a daemon:
         pid_t pid = fork();
         if (pid > 0)
         {
-            printf("Started deamon with pid %d, exiting\n", pid);
-            syslog(LOG_INFO, "Started deamon with pid %d", pid);
+            printf("Started daemon with pid %d, exiting\n", pid);
+            syslog(LOG_INFO, "Started daemon with pid %d", pid);
             terminate_normally();
         }
         else if (pid < 0)
         {
-            perror("Could not start deamon");
-            syslog(LOG_ERR, "Could not start deamon");
+            perror("Could not start daemon");
+            syslog(LOG_ERR, "Could not start daemon");
         }
         else
         {
-            printf("Running as deamon...\n");
+            printf("Running as daemon...\n");
 
             (void)setsid();
             chdir("/");
@@ -330,7 +330,7 @@ int main(int argc, char* argv[])
 
     get_server_address_and_bind();
 
-    start_deamon_if_needed(argc, argv);
+    start_daemon_if_needed(argc, argv);
 
     // Listen for connection on the socket
     if (-1 == listen(sfd, 42))
