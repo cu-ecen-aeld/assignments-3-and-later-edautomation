@@ -8,4 +8,6 @@ aesd-build
 test.sh.log
 *my_written_file.txt
 *testfile.txt
-*/valgrind-out.txt
+aesdsocket
+server/aesdsocket
+server/valgrind-out.txt
