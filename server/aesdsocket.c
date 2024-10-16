@@ -10,6 +10,7 @@
 #include <fcntl.h>
 #include <netdb.h>
 #include <signal.h>
+#include <sys/queue.h>
 #include <sys/socket.h>
 #include <sys/types.h>
 
@@ -31,6 +32,13 @@ struct conn_data_t
     char tmp_buffer[BUFFER_SIZE];  // Used to store data from a packet after a new line
 };
 static struct conn_data_t* p_conn_data = NULL;
+
+struct thread_data_t
+{
+    int fd;
+    struct conn_data_t* p_data;
+    bool is_done;
+};
 
 static inline void close_files(void)
 {
