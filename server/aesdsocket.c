@@ -50,13 +50,11 @@ thread_data_list;
 
 struct thread_data_t* get_new_thread_data(void)
 {
-    printf("Creating new thread data... ");
     struct conn_data_t* new_data = malloc(sizeof(struct conn_data_t));
     memset((void*)new_data, 0, sizeof(new_data));
     struct thread_data_t* new_entry = malloc(sizeof(struct thread_data_t));
     new_entry->p_data = new_data;
     new_entry->is_done = false;
-    printf("done!\n");
     return new_entry;
 }
 
@@ -422,7 +420,6 @@ static void send_back_entire_file(const char* tmp_file, int conn_fd)
 
 static void* worker_thread(void* thread_param)
 {
-    printf("Spawned worker thread\n");
     if (NULL == thread_param)
     {
         return NULL;
@@ -485,7 +482,6 @@ int main(int argc, char* argv[])
         struct thread_data_t* new_thread_data = get_new_thread_data();
         new_thread_data->fd = conn_fd;
 
-        printf("Creating thread... ");
         int res = pthread_create(&new_thread_data->thread_id, NULL, worker_thread, new_thread_data);
         if (res == -1)
         {
@@ -495,16 +491,12 @@ int main(int argc, char* argv[])
         }
         else
         {
-            printf("done!\n");
-
             SLIST_INSERT_HEAD(&thread_data_list, new_thread_data, next);
-            printf("Thread added to list\n");
 
             // Temporary list to keep track of the joined threads which will be removed from the list
             SLIST_HEAD(tmp_list, thread_data_t)
             data_to_cleanup;
             SLIST_INIT(&data_to_cleanup);
-            printf("Tmp list created\n");
 
             // Find out which threads are finished
             struct thread_data_t* entry = NULL;
@@ -516,9 +508,7 @@ int main(int argc, char* argv[])
                     printf("Waiting for thread to join... ");
                     pthread_join(entry->thread_id, NULL);
                     printf("done!\n");
-                    printf("Inserting into cleanup queue... ");
                     SLIST_INSERT_HEAD(&data_to_cleanup, entry, next);
-                    printf("done!\n");
                 }
                 else
                 {
@@ -526,24 +516,16 @@ int main(int argc, char* argv[])
                 }
             }
 
-            printf("Check which threads must be removed from linked list...");
-
             // Remove finished threads from linked list
             if (!SLIST_EMPTY(&data_to_cleanup))
             {
                 while ((entry = SLIST_FIRST(&data_to_cleanup)) != NULL)
                 {
-                    printf("\nRemove thread with id %ld \n{\n", entry->thread_id);
+                    printf("\nRemove thread with id %ld \n", entry->thread_id);
                     SLIST_REMOVE(&thread_data_list, entry, thread_data_t, next);
                     SLIST_REMOVE_HEAD(&data_to_cleanup, next);
                     cleanup_and_free_thread_data(entry);
-                    printf("}\n");
                 }
-                printf("... Done!\n");
-            }
-            else
-            {
-                printf("None removed!\n");
             }
         }
     }
