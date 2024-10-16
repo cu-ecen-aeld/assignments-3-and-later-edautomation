@@ -9,6 +9,7 @@
 #include <errno.h>
 #include <fcntl.h>
 #include <netdb.h>
+#include <pthread.h>
 #include <signal.h>
 #include <sys/queue.h>
 #include <sys/socket.h>
@@ -20,32 +21,44 @@
 volatile __sig_atomic_t stop_sig;
 
 static int sfd = -1;  // Socket file descriptor
-static int cfd = -1;  // Connection file descriptor
 static int wfd = -1;  // Write temporary file descriptor
-static int rfd = -1;  // Read temporary file descriptor
 
 static struct addrinfo* addr = NULL;
+
+static pthread_mutex_t file_mutex = PTHREAD_MUTEX_INITIALIZER;
 
 struct conn_data_t
 {
     char buffer[BUFFER_SIZE];      // Used to store the data read from a socket
     char tmp_buffer[BUFFER_SIZE];  // Used to store data from a packet after a new line
 };
-static struct conn_data_t* p_conn_data = NULL;
 
 struct thread_data_t
 {
     int fd;
     struct conn_data_t* p_data;
     bool is_done;
+    SLIST_ENTRY(thread_data_t)
+    next;
 };
+
+SLIST_HEAD(list, thread_data_t)
+thread_data_list;
+
+struct thread_data_t* get_new_thread_data(void)
+{
+    struct conn_data_t* new_data = malloc(sizeof(struct conn_data_t));
+    memset((void*)new_data, 0, sizeof(new_data));
+    struct thread_data_t* new_entry = malloc(sizeof(struct thread_data_t));
+    new_entry->p_data = new_data;
+    new_entry->is_done = false;
+    return new_entry;
+}
 
 static inline void close_files(void)
 {
     close(sfd);
-    close(cfd);  // TODO : close list of cfds...
     close(wfd);
-    close(rfd);
 }
 
 static inline void cleanup_memory(void)
@@ -56,13 +69,17 @@ static inline void cleanup_memory(void)
         addr = NULL;
     }
 
-    if (NULL != p_conn_data)
-    {
-        free(p_conn_data);
-    }
-
     // TODO : request all threads to terminate
     // TODO : join all threads
+
+    struct thread_data_t* entry = NULL;
+    while ((entry = SLIST_FIRST(&thread_data_list)) != NULL)
+    {
+        SLIST_REMOVE_HEAD(&thread_data_list, next);
+        close(entry->fd);
+        free(entry->p_data);
+        free(entry);
+    }
 }
 
 static inline void terminate_normally(void)
@@ -82,6 +99,22 @@ static inline void terminate_with_error(void)
 }
 
 // TODO : make rw from/to file thread-safe : wrapper around read and write functions
+
+static int read_safe(int fd, void* buffer, size_t n_bytes)
+{
+    pthread_mutex_lock(&file_mutex);
+    int res = read(fd, buffer, n_bytes);
+    pthread_mutex_unlock(&file_mutex);
+    return res;
+}
+
+static int write_safe(int fd, void* buffer, size_t n_bytes)
+{
+    pthread_mutex_lock(&file_mutex);
+    int res = write(fd, buffer, n_bytes);
+    pthread_mutex_unlock(&file_mutex);
+    return res;
+}
 
 static void start_daemon_if_needed(int argc, char* argv[])
 {
@@ -239,9 +272,9 @@ static struct conn_data_t* wait_for_connection(int* conn_fd)
     return p_conn_data;
 }
 
-static void write_received_data_to_file(int* conn_fd, struct conn_data_t* p_conn_data)
+static void write_received_data_to_file(int conn_fd, struct conn_data_t* p_conn_data)
 {
-    if ((NULL == conn_fd) || (NULL == p_conn_data))
+    if (NULL == p_conn_data)
     {
         syslog(LOG_ERR, "NULL passed to write_received_data_to_file");
         return;
@@ -254,7 +287,7 @@ static void write_received_data_to_file(int* conn_fd, struct conn_data_t* p_conn
     bool did_find_eol = false;
     while (!did_find_eol)
     {
-        int len = read(*conn_fd, p_conn_data->buffer, BURST_SIZE);
+        int len = read(conn_fd, p_conn_data->buffer, BURST_SIZE);
         if (-1 == len)
         {
             int err = errno;
@@ -283,7 +316,7 @@ static void write_received_data_to_file(int* conn_fd, struct conn_data_t* p_conn
                 eol_ptr[1] = '\0';  // for string length
                 size_t str_len = strlen(p_conn_data->buffer);
                 printf("Read %lu bytes until end of line\n", str_len);
-                if (-1 == write(wfd, p_conn_data->buffer, str_len))
+                if (-1 == write_safe(wfd, p_conn_data->buffer, str_len))
                 {
                     syslog(LOG_ERR, "Could not write to tmp file");
                     terminate_with_error();
@@ -294,7 +327,7 @@ static void write_received_data_to_file(int* conn_fd, struct conn_data_t* p_conn
             else
             {
                 // No newline -> packet not finished -> write entire buffer to file
-                if (-1 == write(wfd, p_conn_data->buffer, len))
+                if (-1 == write_safe(wfd, p_conn_data->buffer, len))
                 {
                     syslog(LOG_ERR, "Could not write to tmp file");
                     terminate_with_error();
@@ -308,14 +341,8 @@ static void write_received_data_to_file(int* conn_fd, struct conn_data_t* p_conn
     }
 }
 
-static void send_back_entire_file(const char* filename, int* conn_fd)
+static void send_back_entire_file(const char* filename, int conn_fd)
 {
-    if (NULL == conn_fd)
-    {
-        syslog(LOG_ERR, "NULL passed to send_back_entire_file");
-        return;
-    }
-
     int read_fd = open(filename, O_RDONLY);
     if (-1 == read_fd)
     {
@@ -333,7 +360,7 @@ static void send_back_entire_file(const char* filename, int* conn_fd)
     while (true)
     {
         // TODO : mutex
-        int rd_len = read(read_fd, buffer, BUFFER_SIZE);
+        int rd_len = read_safe(read_fd, buffer, BUFFER_SIZE);
         if (-1 == rd_len)
         {
             syslog(LOG_ERR, "Error reading from tmp file");
@@ -345,7 +372,7 @@ static void send_back_entire_file(const char* filename, int* conn_fd)
         else if (rd_len > 0)
         {
             // TODO : mutex
-            while (-1 == write(*conn_fd, buffer, rd_len))
+            while (-1 == write_safe(conn_fd, buffer, rd_len))
             {
                 int err = errno;
                 if ((err == EAGAIN) || (err == EWOULDBLOCK))
@@ -407,27 +434,28 @@ int main(int argc, char* argv[])
 
     while (true)
     {
-        // TODO : add cfd to list
-        p_conn_data = wait_for_connection(&cfd);
-        if (NULL == p_conn_data)
+        // TODO : spawn new thread
+        struct thread_data_t thread_data;
+        thread_data.p_data = wait_for_connection(&thread_data.fd);
+        if (NULL == thread_data.p_data)
         {
+            close(thread_data.fd);
             continue;
         }
 
-        write_received_data_to_file(&cfd, p_conn_data);
-        send_back_entire_file(filename, &cfd);
+        write_received_data_to_file(thread_data.fd, thread_data.p_data);
+        send_back_entire_file(filename, thread_data.fd);
 
         // Write stream content coming after the newline to the file
-        if (-1 == write(wfd, p_conn_data->tmp_buffer, strlen(p_conn_data->tmp_buffer)))
+        if (-1 == write_safe(wfd, thread_data.p_data->tmp_buffer, strlen(thread_data.p_data->tmp_buffer)))
         {
             syslog(LOG_ERR, "Could not write to tmp file");
             terminate_with_error();
         }
 
         printf("Closing connection\n");
-        close(cfd);
-        close(rfd);
-        free(p_conn_data);
+        close(thread_data.fd);
+        free(thread_data.p_data);
     }
 
     terminate_normally();
