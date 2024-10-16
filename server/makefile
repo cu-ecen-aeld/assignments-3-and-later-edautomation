@@ -2,7 +2,7 @@
 
 CC = $(CROSS_COMPILE)gcc
 CFLAGS = -Wall
-LDFLAGS = -pthread
+LDFLAGS = -lpthread -lrt
 SRC = $(wildcard *.c)
 OBJ = $(SRC:.c=.o)
 
@@ -13,7 +13,7 @@ all: $(TARGET)
 default : $(TARGET)
 
 $(TARGET) : $(OBJ)
-	$(CC) $(LDFLAGS) $(OBJ) -o $(TARGET)
+	$(CC) $(OBJ) -o $(TARGET) $(LDFLAGS) 
 
 *.o: *.c
 	$(CC) $(CFLAGS) -c $< -o $@	

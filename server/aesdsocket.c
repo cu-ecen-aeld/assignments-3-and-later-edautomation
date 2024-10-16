@@ -4,6 +4,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <syslog.h>
+#include <time.h>
 #include <unistd.h>
 
 #include <errno.h>
@@ -17,8 +18,6 @@
 
 #define BUFFER_SIZE 1024
 #define BURST_SIZE  (BUFFER_SIZE - 1)
-
-volatile __sig_atomic_t stop_sig;
 
 static const char* tmp_file = "/var/tmp/aesdsocketdata";
 
@@ -47,6 +46,8 @@ struct thread_data_t
 
 SLIST_HEAD(list, thread_data_t)
 thread_data_list;
+
+timer_t timerid;
 
 struct thread_data_t* get_new_thread_data(void)
 {
@@ -300,7 +301,7 @@ static void write_received_data_to_file(int conn_fd, struct conn_data_t* p_conn_
 
     // Receive data until end of packet
     bool did_find_eol = false;
-    while (!did_find_eol && !stop_sig)
+    while (!did_find_eol)
     {
         int len = read(conn_fd, p_conn_data->buffer, BURST_SIZE);
         if (-1 == len)
@@ -372,7 +373,7 @@ static void send_back_entire_file(const char* tmp_file, int conn_fd)
         return;
     }
 
-    while (!stop_sig)
+    while (true)
     {
         int rd_len = read_safe(read_fd, buffer, BUFFER_SIZE);
         if (-1 == rd_len)
@@ -385,7 +386,7 @@ static void send_back_entire_file(const char* tmp_file, int conn_fd)
         }
         else if (rd_len > 0)
         {
-            while (!stop_sig && (-1 == write(conn_fd, buffer, rd_len)))
+            while (-1 == write(conn_fd, buffer, rd_len))
             {
                 int err = errno;
                 if ((err == EAGAIN) || (err == EWOULDBLOCK))
@@ -445,6 +446,65 @@ static void* worker_thread(void* thread_param)
     return thread_param;
 }
 
+void update_timestamp(int signum)
+{
+    if (SIGRTMIN == signum)
+    {
+        time_t now;
+        struct tm* tm_info;
+        char buffer[128];
+
+        time(&now);
+        tm_info = localtime(&now);
+        strftime(buffer, sizeof(buffer), "timestamp:%a, %d %b %Y %H:%M:%S %z\n", tm_info);
+
+        printf("Writing time to file : %s", buffer);
+        if (-1 == write_safe(wfd, buffer, strlen(buffer)))
+        {
+            syslog(LOG_ERR, "Could not write timestamp to file");
+            terminate_with_error();
+        }
+    }
+}
+
+static void setup_and_start_timer(void)
+{
+    struct sigevent sev;
+    struct itimerspec its;
+    struct sigaction sa;
+
+    // Set up the signal handler for the timer signal
+    sa.sa_flags = 0;
+    sa.sa_handler = update_timestamp;
+    sigemptyset(&sa.sa_mask);
+    if (-1 == sigaction(SIGRTMIN, &sa, NULL))
+    {
+        syslog(LOG_ERR, "sigaction call failed");
+        terminate_with_error();
+    }
+
+    // Create the timer
+    sev.sigev_notify = SIGEV_SIGNAL;
+    sev.sigev_signo = SIGRTMIN;
+    sev.sigev_value.sival_ptr = &timerid;
+    if (-1 == timer_create(CLOCK_REALTIME, &sev, &timerid))
+    {
+        syslog(LOG_ERR, "timer_create call failed");
+        terminate_with_error();
+    }
+
+    // Set the timer to expire after 10 seconds and then every 10 seconds
+    its.it_value.tv_sec = 10;
+    its.it_value.tv_nsec = 0;
+    its.it_interval.tv_sec = 10;
+    its.it_interval.tv_nsec = 0;
+    if (-1 == timer_settime(timerid, 0, &its, NULL))
+    {
+        syslog(LOG_ERR, "timer_settime call failed");
+        terminate_with_error();
+    }
+}
+
 int main(int argc, char* argv[])
 {
     signal(SIGINT, handle_signal);
@@ -452,6 +512,8 @@ int main(int argc, char* argv[])
 
     openlog("aesdsocketsyslog", 0, LOG_USER);
     create_log_file(tmp_file);
+
+    setup_and_start_timer();
 
     get_server_address_and_bind();
 
@@ -471,7 +533,7 @@ int main(int argc, char* argv[])
 
     SLIST_INIT(&thread_data_list);
 
-    while (!stop_sig)
+    while (true)
     {
         int conn_fd = 0;
         if (!wait_for_connection(&conn_fd))
