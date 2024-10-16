@@ -513,11 +513,11 @@ int main(int argc, char* argv[])
     openlog("aesdsocketsyslog", 0, LOG_USER);
     create_log_file(tmp_file);
 
-    setup_and_start_timer();
-
     get_server_address_and_bind();
 
     start_daemon_if_needed(argc, argv);
+
+    setup_and_start_timer();
 
     // Listen for connection on the socket
     if (-1 == listen(sfd, 42))
