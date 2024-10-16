@@ -20,6 +20,8 @@
 
 volatile __sig_atomic_t stop_sig;
 
+static const char* tmp_file = "/var/tmp/aesdsocketdata";
+
 static int sfd = -1;  // Socket file descriptor
 static int wfd = -1;  // Write temporary file descriptor
 
@@ -35,6 +37,7 @@ struct conn_data_t
 
 struct thread_data_t
 {
+    pthread_t thread_id;
     int fd;
     struct conn_data_t* p_data;
     bool is_done;
@@ -47,12 +50,26 @@ thread_data_list;
 
 struct thread_data_t* get_new_thread_data(void)
 {
+    printf("Creating new thread data... ");
     struct conn_data_t* new_data = malloc(sizeof(struct conn_data_t));
     memset((void*)new_data, 0, sizeof(new_data));
     struct thread_data_t* new_entry = malloc(sizeof(struct thread_data_t));
     new_entry->p_data = new_data;
     new_entry->is_done = false;
+    printf("done!\n");
     return new_entry;
+}
+
+void cleanup_and_free_thread_data(struct thread_data_t* thread_data)
+{
+    if (NULL == thread_data)
+    {
+        return;
+    }
+    printf("Closing connection with file descriptor %d\n", thread_data->fd);
+    close(thread_data->fd);
+    free(thread_data->p_data);
+    free(thread_data);
 }
 
 static inline void close_files(void)
@@ -69,16 +86,19 @@ static inline void cleanup_memory(void)
         addr = NULL;
     }
 
-    // TODO : request all threads to terminate
-    // TODO : join all threads
-
-    struct thread_data_t* entry = NULL;
-    while ((entry = SLIST_FIRST(&thread_data_list)) != NULL)
+    if (!SLIST_EMPTY(&thread_data_list))
     {
-        SLIST_REMOVE_HEAD(&thread_data_list, next);
-        close(entry->fd);
-        free(entry->p_data);
-        free(entry);
+        struct thread_data_t* entry = NULL;
+        SLIST_FOREACH(entry, &thread_data_list, next)
+        {
+            pthread_join(entry->thread_id, NULL);
+        }
+
+        while ((entry = SLIST_FIRST(&thread_data_list)) != NULL)
+        {
+            SLIST_REMOVE_HEAD(&thread_data_list, next);
+            cleanup_and_free_thread_data(entry);
+        }
     }
 }
 
@@ -97,8 +117,6 @@ static inline void terminate_with_error(void)
     close_files();
     exit(-1);
 }
-
-// TODO : make rw from/to file thread-safe : wrapper around read and write functions
 
 static int read_safe(int fd, void* buffer, size_t n_bytes)
 {
@@ -159,9 +177,9 @@ static void handle_signal(int signal)
     }
 }
 
-static void create_log_file(const char* filename)
+static void create_log_file(const char* tmp_file)
 {
-    wfd = creat(filename, 0644);
+    wfd = creat(tmp_file, 0644);
     if (-1 == wfd)
     {
         syslog(LOG_ERR, "Could not create tmp file");
@@ -226,13 +244,13 @@ static void get_server_address_and_bind(void)
     }
 }
 
-static struct conn_data_t* wait_for_connection(int* conn_fd)
+static bool wait_for_connection(int* conn_fd)
 {
     // Do not use assert. Instead, do as if no connection could be received.
     if (NULL == conn_fd)
     {
         syslog(LOG_ERR, "NULL passed to wait_for_connection");
-        return NULL;
+        return false;
     }
 
     struct sockaddr peer_addr;
@@ -244,7 +262,7 @@ static struct conn_data_t* wait_for_connection(int* conn_fd)
     {
         if ((err == EAGAIN) || (err == EWOULDBLOCK))
         {
-            return NULL;
+            return false;
         }
         else
         {
@@ -268,8 +286,7 @@ static struct conn_data_t* wait_for_connection(int* conn_fd)
             printf("Error getting info: %s\n", gai_strerror(s));
         }
     }
-    struct conn_data_t* p_conn_data = malloc(sizeof(struct conn_data_t));
-    return p_conn_data;
+    return true;
 }
 
 static void write_received_data_to_file(int conn_fd, struct conn_data_t* p_conn_data)
@@ -285,7 +302,7 @@ static void write_received_data_to_file(int conn_fd, struct conn_data_t* p_conn_
 
     // Receive data until end of packet
     bool did_find_eol = false;
-    while (!did_find_eol)
+    while (!did_find_eol && !stop_sig)
     {
         int len = read(conn_fd, p_conn_data->buffer, BURST_SIZE);
         if (-1 == len)
@@ -341,9 +358,9 @@ static void write_received_data_to_file(int conn_fd, struct conn_data_t* p_conn_
     }
 }
 
-static void send_back_entire_file(const char* filename, int conn_fd)
+static void send_back_entire_file(const char* tmp_file, int conn_fd)
 {
-    int read_fd = open(filename, O_RDONLY);
+    int read_fd = open(tmp_file, O_RDONLY);
     if (-1 == read_fd)
     {
         syslog(LOG_ERR, "Could not open tmp file for reading");
@@ -357,9 +374,8 @@ static void send_back_entire_file(const char* filename, int conn_fd)
         return;
     }
 
-    while (true)
+    while (!stop_sig)
     {
-        // TODO : mutex
         int rd_len = read_safe(read_fd, buffer, BUFFER_SIZE);
         if (-1 == rd_len)
         {
@@ -371,22 +387,20 @@ static void send_back_entire_file(const char* filename, int conn_fd)
         }
         else if (rd_len > 0)
         {
-            // TODO : mutex
-            while (-1 == write_safe(conn_fd, buffer, rd_len))
+            while (!stop_sig && (-1 == write(conn_fd, buffer, rd_len)))
             {
                 int err = errno;
                 if ((err == EAGAIN) || (err == EWOULDBLOCK))
                 {
-                    if (stop_sig)
-                    {
-                        break;
-                    }
                     continue;
                 }
                 else
                 {
                     syslog(LOG_ERR, "Error sending data");
                     printf("Error reading sending data\n");
+
+                    free(buffer);
+                    close(read_fd);
                     terminate_with_error();
                 }
             }
@@ -406,15 +420,41 @@ static void send_back_entire_file(const char* filename, int conn_fd)
     close(read_fd);
 }
 
+static void* worker_thread(void* thread_param)
+{
+    printf("Spawned worker thread\n");
+    if (NULL == thread_param)
+    {
+        return NULL;
+    }
+    struct thread_data_t* params = (struct thread_data_t*)thread_param;
+
+    printf("Starting worker thread with id %ld...\n", params->thread_id);
+
+    write_received_data_to_file(params->fd, params->p_data);
+    send_back_entire_file(tmp_file, params->fd);
+
+    // Write stream content coming after the newline to the file
+    if (-1 == write_safe(wfd, params->p_data->tmp_buffer, strlen(params->p_data->tmp_buffer)))
+    {
+        syslog(LOG_ERR, "Could not write to tmp file");
+        terminate_with_error();
+    }
+
+    params->is_done = true;
+
+    printf("Worker thread with id %ld finished!\n", params->thread_id);
+
+    return thread_param;
+}
+
 int main(int argc, char* argv[])
 {
     signal(SIGINT, handle_signal);
     signal(SIGTERM, handle_signal);
 
     openlog("aesdsocketsyslog", 0, LOG_USER);
-
-    const char* filename = "/var/tmp/aesdsocketdata";
-    create_log_file(filename);
+    create_log_file(tmp_file);
 
     get_server_address_and_bind();
 
@@ -432,30 +472,80 @@ int main(int argc, char* argv[])
         printf("Listen for connection successful\n");
     }
 
-    while (true)
+    SLIST_INIT(&thread_data_list);
+
+    while (!stop_sig)
     {
-        // TODO : spawn new thread
-        struct thread_data_t thread_data;
-        thread_data.p_data = wait_for_connection(&thread_data.fd);
-        if (NULL == thread_data.p_data)
+        int conn_fd = 0;
+        if (!wait_for_connection(&conn_fd))
         {
-            close(thread_data.fd);
             continue;
         }
 
-        write_received_data_to_file(thread_data.fd, thread_data.p_data);
-        send_back_entire_file(filename, thread_data.fd);
+        struct thread_data_t* new_thread_data = get_new_thread_data();
+        new_thread_data->fd = conn_fd;
 
-        // Write stream content coming after the newline to the file
-        if (-1 == write_safe(wfd, thread_data.p_data->tmp_buffer, strlen(thread_data.p_data->tmp_buffer)))
+        printf("Creating thread... ");
+        int res = pthread_create(&new_thread_data->thread_id, NULL, worker_thread, new_thread_data);
+        if (res == -1)
         {
-            syslog(LOG_ERR, "Could not write to tmp file");
-            terminate_with_error();
+            syslog(LOG_ERR, "Could not create thread for connection %d", conn_fd);
+            printf("Could not create thread for connection %d\n", conn_fd);
+            cleanup_and_free_thread_data(new_thread_data);
         }
+        else
+        {
+            printf("done!\n");
 
-        printf("Closing connection\n");
-        close(thread_data.fd);
-        free(thread_data.p_data);
+            SLIST_INSERT_HEAD(&thread_data_list, new_thread_data, next);
+            printf("Thread added to list\n");
+
+            // Temporary list to keep track of the joined threads which will be removed from the list
+            SLIST_HEAD(tmp_list, thread_data_t)
+            data_to_cleanup;
+            SLIST_INIT(&data_to_cleanup);
+            printf("Tmp list created\n");
+
+            // Find out which threads are finished
+            struct thread_data_t* entry = NULL;
+            SLIST_FOREACH(entry, &thread_data_list, next)
+            {
+                printf("Checking if thread with id %ld is finished... ", entry->thread_id);
+                if (entry->is_done)
+                {
+                    printf("Waiting for thread to join... ");
+                    pthread_join(entry->thread_id, NULL);
+                    printf("done!\n");
+                    printf("Inserting into cleanup queue... ");
+                    SLIST_INSERT_HEAD(&data_to_cleanup, entry, next);
+                    printf("done!\n");
+                }
+                else
+                {
+                    printf("not finished\n");
+                }
+            }
+
+            printf("Check which threads must be removed from linked list...");
+
+            // Remove finished threads from linked list
+            if (!SLIST_EMPTY(&data_to_cleanup))
+            {
+                while ((entry = SLIST_FIRST(&data_to_cleanup)) != NULL)
+                {
+                    printf("\nRemove thread with id %ld \n{\n", entry->thread_id);
+                    SLIST_REMOVE(&thread_data_list, entry, thread_data_t, next);
+                    SLIST_REMOVE_HEAD(&data_to_cleanup, next);
+                    cleanup_and_free_thread_data(entry);
+                    printf("}\n");
+                }
+                printf("... Done!\n");
+            }
+            else
+            {
+                printf("None removed!\n");
+            }
+        }
     }
 
     terminate_normally();
