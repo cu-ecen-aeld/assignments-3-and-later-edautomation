@@ -1,12 +1,12 @@
 
 
-CC = $(CROSS_COMPILE)gcc
-CFLAGS = -Wall
-LDFLAGS = -lpthread -lrt
+CC ?= $(CROSS_COMPILE)gcc
+CFLAGS ?= -Wall
+LDFLAGS ?= -lpthread -lrt
 SRC = $(wildcard *.c)
 OBJ = $(SRC:.c=.o)
 
-TARGET = aesdsocket
+TARGET ?= aesdsocket
 
 all: $(TARGET)
 
