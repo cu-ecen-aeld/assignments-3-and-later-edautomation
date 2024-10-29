@@ -37,17 +37,16 @@ struct conn_data_t
 struct thread_data_t
 {
     pthread_t thread_id;
+    bool is_done;
+    bool is_started;
     int fd;
     struct conn_data_t* p_data;
-    bool is_done;
-    SLIST_ENTRY(thread_data_t)
-    next;
+    struct thread_data_t* next;
 };
 
-SLIST_HEAD(list, thread_data_t)
-thread_data_list;
+static struct thread_data_t* head = NULL;
 
-timer_t timerid;
+timer_t timerid = NULL;
 
 struct thread_data_t* get_new_thread_data(void)
 {
@@ -85,19 +84,19 @@ static inline void cleanup_memory(void)
         addr = NULL;
     }
 
-    if (!SLIST_EMPTY(&thread_data_list))
+    if (NULL != timerid)
     {
-        struct thread_data_t* entry = NULL;
-        SLIST_FOREACH(entry, &thread_data_list, next)
-        {
-            pthread_join(entry->thread_id, NULL);
-        }
+        timer_delete(timerid);
+    }
 
-        while ((entry = SLIST_FIRST(&thread_data_list)) != NULL)
-        {
-            SLIST_REMOVE_HEAD(&thread_data_list, next);
-            cleanup_and_free_thread_data(entry);
-        }
+    struct thread_data_t* current = head;
+    while (NULL != current)
+    {
+        head = current->next;
+        printf("\nRemove thread with id %ld \n", current->thread_id);
+        pthread_join(current->thread_id, NULL);
+        cleanup_and_free_thread_data(current);
+        current = head;
     }
 }
 
@@ -531,8 +530,6 @@ int main(int argc, char* argv[])
         printf("Listen for connection successful\n");
     }
 
-    SLIST_INIT(&thread_data_list);
-
     while (true)
     {
         int conn_fd = 0;
@@ -543,7 +540,6 @@ int main(int argc, char* argv[])
 
         struct thread_data_t* new_thread_data = get_new_thread_data();
         new_thread_data->fd = conn_fd;
-
         int res = pthread_create(&new_thread_data->thread_id, NULL, worker_thread, new_thread_data);
         if (res == -1)
         {
@@ -553,40 +549,37 @@ int main(int argc, char* argv[])
         }
         else
         {
-            SLIST_INSERT_HEAD(&thread_data_list, new_thread_data, next);
-
-            // Temporary list to keep track of the joined threads which will be removed from the list
-            SLIST_HEAD(tmp_list, thread_data_t)
-            data_to_cleanup;
-            SLIST_INIT(&data_to_cleanup);
-
-            // Find out which threads are finished
-            struct thread_data_t* entry = NULL;
-            SLIST_FOREACH(entry, &thread_data_list, next)
+            if (NULL != head)
             {
-                printf("Checking if thread with id %ld is finished... ", entry->thread_id);
-                if (entry->is_done)
+                new_thread_data->next = head;
+            }
+            head = new_thread_data;
+
+            struct thread_data_t* previous = NULL;
+            struct thread_data_t* current = head;
+            while (NULL != current)
+            {
+                printf("Checking if thread with id %ld is finished... ", current->thread_id);
+                if (current->is_done)
                 {
                     printf("Waiting for thread to join... ");
-                    pthread_join(entry->thread_id, NULL);
+                    pthread_join(current->thread_id, NULL);
                     printf("done!\n");
-                    SLIST_INSERT_HEAD(&data_to_cleanup, entry, next);
+                    if (NULL == previous)
+                    {
+                        head = current->next;
+                    }
+                    else
+                    {
+                        previous->next = current->next;
+                    }
+                    cleanup_and_free_thread_data(current);
+                    current = previous->next;
                 }
                 else
                 {
-                    printf("not finished\n");
-                }
-            }
-
-            // Remove finished threads from linked list
-            if (!SLIST_EMPTY(&data_to_cleanup))
-            {
-                while ((entry = SLIST_FIRST(&data_to_cleanup)) != NULL)
-                {
-                    printf("\nRemove thread with id %ld \n", entry->thread_id);
-                    SLIST_REMOVE(&thread_data_list, entry, thread_data_t, next);
-                    SLIST_REMOVE_HEAD(&data_to_cleanup, next);
-                    cleanup_and_free_thread_data(entry);
+                    previous = current;
+                    current = current->next;
                 }
             }
         }
