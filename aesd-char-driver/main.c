@@ -185,7 +185,6 @@ int aesd_init_module(void)
     /**
      * TODO: initialize the AESD specific portion of the device
      */
-
     aesd_circular_buffer_init(&aesd_device.circ_buffer);
 
     result = aesd_setup_cdev(&aesd_device);
@@ -204,8 +203,17 @@ void aesd_cleanup_module(void)
     cdev_del(&aesd_device.cdev);
 
     /**
-     * TODO: cleanup AESD specific poritions here as necessary
+     * TODO: cleanup AESD specific portions here as necessary
      */
+    uint8_t index;
+    for (index = 0; index < AESDCHAR_MAX_WRITE_OPERATIONS_SUPPORTED; index++)
+    {
+        char* mem = aesd_device.circ_buffer.entry[index].buffptr;
+        if (NULL != mem)
+        {
+            kfree(mem);
+        }
+    }
 
     unregister_chrdev_region(devno, 1);
 }
