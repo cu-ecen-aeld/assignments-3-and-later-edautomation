@@ -133,17 +133,20 @@ struct aesd_buffer_entry* aesd_circular_buffer_find_entry_offset_for_fpos(struct
  * new start location.
  * Any necessary locking must be handled by the caller
  * Any memory referenced in @param add_entry must be allocated by and/or must have a lifetime managed by the caller.
+ * @return NULL or, if an entry was overwritten by a new one, a pointer to the memory buffer for the overwritten entry.
  */
-void aesd_circular_buffer_add_entry(struct aesd_circular_buffer* buffer, const struct aesd_buffer_entry* add_entry)
+char* aesd_circular_buffer_add_entry(struct aesd_circular_buffer* buffer, const struct aesd_buffer_entry* add_entry)
 {
     /**
      * TODO: implement per description
      */
 
+    char* retval = NULL;
+
     if ((NULL == buffer) || (NULL == add_entry))
     {
         PRINT("CIRCULAR_BUFFER: Invalid inputs\n");
-        return;
+        return retval;
     }
 
     // Add entry and increment (with wrap) in pointer
@@ -161,7 +164,8 @@ void aesd_circular_buffer_add_entry(struct aesd_circular_buffer* buffer, const s
     if ((buffer->in_offs > buffer->out_offs) && buffer->full)
     {
         PRINT("CIRCULAR_BUFFER: Overwriting\n");
-        buffer->out_offs++;
+        retval = buffer->entry[buffer->out_offs].buffptr;  // Memory to be freed
+        buffer->out_offs++;                                // Move read pointer
     }
     else if (buffer->in_offs == buffer->out_offs)
     {
@@ -175,6 +179,7 @@ void aesd_circular_buffer_add_entry(struct aesd_circular_buffer* buffer, const s
     }
 
     PRINT("CIRCULAR BUFFER: Indexes for next add are in=%u, out=%u\n", buffer->in_offs, buffer->out_offs);
+    return retval;
 }
 
 /**
