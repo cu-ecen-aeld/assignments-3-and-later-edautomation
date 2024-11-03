@@ -90,7 +90,7 @@ ssize_t aesd_read(struct file* filp, char __user* buf, size_t count,
         }
         if (read_len > 0)
         {
-            int res = copy_to_user(buf, entry->buffptr[offset_in_entry], read_len);
+            int res = copy_to_user(buf, &entry->buffptr[offset_in_entry], read_len);
             if (res)
             {
                 retval = -EFAULT;

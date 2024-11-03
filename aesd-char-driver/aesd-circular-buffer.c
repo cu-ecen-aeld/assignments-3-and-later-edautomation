@@ -9,8 +9,10 @@
  */
 
 #ifdef __KERNEL__
+#include <linux/printk.h>
 #include <linux/string.h>
-#define PRINT(...)
+#define PRINT(...) printk(__VA_ARGS__)
+
 #else
 #include <stdio.h>
 #include <string.h>
