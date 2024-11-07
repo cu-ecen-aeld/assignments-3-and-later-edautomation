@@ -181,6 +181,7 @@ ssize_t aesd_write(struct file* filp, const char __user* buf, size_t count,
                 // NO -> copy only if no new line
                 if (!is_new_line)
                 {
+                    PDEBUG("New entry without new line");
                     dev->tmp_entry = new_entry;
                 }
                 else
@@ -192,6 +193,7 @@ ssize_t aesd_write(struct file* filp, const char __user* buf, size_t count,
             else
             {
                 // YES -> append data to tmp entry
+
                 char* new_buff = krealloc(dev->tmp_entry.buffptr, dev->tmp_entry.size + count, GFP_KERNEL);
                 if (NULL == new_buff)
                 {
@@ -201,6 +203,7 @@ ssize_t aesd_write(struct file* filp, const char __user* buf, size_t count,
                 else
                 {
                     size_t i = 0;
+                    PDEBUG("Appending data to tmp entry");
                     for (i = 0; i < count; i++)
                     {
                         dev->tmp_entry.buffptr[dev->tmp_entry.size + i] = new_entry.buffptr[i];
@@ -212,6 +215,7 @@ ssize_t aesd_write(struct file* filp, const char __user* buf, size_t count,
                 // New line -> add tmp entry containing all past and new data to buffer, reset tmp
                 if (is_new_line)
                 {
+                    PDEBUG("New line-> write to buffer");
                     entry_to_free = aesd_circular_buffer_add_entry(circ_buffer, &dev->tmp_entry);
                     dev->tmp_entry.buffptr = NULL;
                     // Memory will be freed when circular buffer is cleaned up

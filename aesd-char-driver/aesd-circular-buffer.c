@@ -157,8 +157,8 @@ char* aesd_circular_buffer_add_entry(struct aesd_circular_buffer* buffer, const 
     if (buffer->full)
     {
         PRINT("CIRCULAR_BUFFER: Buffer full, overwriting\n");
-        retval = buffer->entry[buffer->out_offs].buffptr;  // Memory to be freed
-        buffer->out_offs++;                                // Move read pointer
+        retval = buffer->entry[buffer->out_offs].buffptr;                                     // Memory to be freed
+        buffer->out_offs = (buffer->out_offs + 1) % AESDCHAR_MAX_WRITE_OPERATIONS_SUPPORTED;  // Move read pointer
     }
 
     // Add new entry
