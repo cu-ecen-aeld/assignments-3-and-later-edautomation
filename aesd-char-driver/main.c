@@ -99,6 +99,7 @@ ssize_t aesd_read(struct file* filp, char __user* buf, size_t count,
         {
             read_len = count;  // read less than the available length
         }
+
         if (read_len > 0)
         {
             int res = copy_to_user(buf, &entry->buffptr[offset_in_entry], read_len);
@@ -150,95 +151,72 @@ ssize_t aesd_write(struct file* filp, const char __user* buf, size_t count,
 
     // Allocate memory for new entry
     kbuffer = kmalloc(count, GFP_KERNEL);
-    if (NULL != kbuffer)
+    if (NULL == kbuffer)
     {
-        // Add new entry to circular buffer
-        struct aesd_buffer_entry new_entry = {
-            .size = count,
-            .buffptr = kbuffer,
-        };
-        if (copy_from_user(new_entry.buffptr, buf, count))
-        {
-            PDEBUG("Could not copy from user space!");
-        }
-        else
-        {
-            // Check if the new entry contains a new line
-            bool is_new_line = false;
-            size_t i = 0;
-            for (i = 0; i < count; i++)
-            {
-                if (new_entry.buffptr[i] == '\n')
-                {
-                    is_new_line = true;
-                    break;
-                }
-            }
+        PDEBUG("Cannot allocate memory!");
+        goto out;
+    }
 
-            // Is there already data temporarily stored?
-            if (NULL == dev->tmp_entry.buffptr)
-            {
-                // NO -> copy only if no new line
-                if (!is_new_line)
-                {
-                    PDEBUG("New entry without new line");
-                    dev->tmp_entry = new_entry;
-                }
-                else
-                {
-                    // New line, no tmp data -> add to buffer right away
-                    entry_to_free = aesd_circular_buffer_add_entry(circ_buffer, &new_entry);
-                }
-            }
-            else
-            {
-                // YES -> append data to tmp entry
+    // We will manipulate memory in the kernel space
+    if (copy_from_user(kbuffer, buf, count))
+    {
+        PDEBUG("Could not copy from user space!");
+        kfree(kbuffer);
+        retval = -EFAULT;
+        goto out;
+    }
 
-                char* new_buff = krealloc(dev->tmp_entry.buffptr, dev->tmp_entry.size + count, GFP_KERNEL);
-                if (NULL == new_buff)
-                {
-                    retval = -ENOMEM;
-                    goto out;
-                }
-                else
-                {
-                    size_t i = 0;
-                    PDEBUG("Appending data to tmp entry");
-                    for (i = 0; i < count; i++)
-                    {
-                        dev->tmp_entry.buffptr[dev->tmp_entry.size + i] = new_entry.buffptr[i];
-                    }
-                    dev->tmp_entry.size += count;
-                    kfree(new_entry.buffptr);  // New entry will not be written to the buffer -> free it
-                }
-
-                // New line -> add tmp entry containing all past and new data to buffer, reset tmp
-                if (is_new_line)
-                {
-                    PDEBUG("New line-> write to buffer");
-                    entry_to_free = aesd_circular_buffer_add_entry(circ_buffer, &dev->tmp_entry);
-                    dev->tmp_entry.buffptr = NULL;
-                    // Memory will be freed when circular buffer is cleaned up
-                }
-            }
-
-            if (entry_to_free)
-            {
-                PDEBUG("Freeing memory for kicked out entry.");
-                kfree(entry_to_free);
-            }
-            retval = count;
-        }
+    // Is there already data temporarily stored?
+    if (NULL == dev->tmp_entry.buffptr)
+    {
+        // NO -> store it
+        PDEBUG("New tmp entry");
+        dev->tmp_entry.size = count;
+        dev->tmp_entry.buffptr = kbuffer;
     }
     else
     {
-        PDEBUG("Cannot allocate memory!");
+        // YES -> append data to tmp entry
+        char* new_buff = krealloc(dev->tmp_entry.buffptr, dev->tmp_entry.size + count, GFP_KERNEL);
+        if (NULL == new_buff)
+        {
+            retval = -ENOMEM;
+            kfree(kbuffer);
+            goto out;
+        }
+        else
+        {
+            size_t i = 0;
+            PDEBUG("Appending data to tmp entry");
+            for (i = 0; i < count; i++)
+            {
+                dev->tmp_entry.buffptr[dev->tmp_entry.size + i] = kbuffer[i];
+            }
+            dev->tmp_entry.size += count;
+        }
     }
+
+    // Copy to circular buffer if last received char is a new line
+    if (kbuffer[count - 1] == '\n')
+    {
+        PDEBUG("New line-> write to buffer");
+        entry_to_free = aesd_circular_buffer_add_entry(circ_buffer, &dev->tmp_entry);
+        dev->tmp_entry.buffptr = NULL;  // Reset for next entry
+        // Memory will be freed when circular buffer is cleaned up
+    }
+
+    if (entry_to_free)
+    {
+        PDEBUG("Freeing memory for kicked out entry.");
+        kfree(entry_to_free);
+    }
+    retval = count;
 
 out:
     mutex_unlock(&dev->lock);
     return retval;
 }
+
 struct file_operations aesd_fops = {
     .owner = THIS_MODULE,
     .read = aesd_read,
