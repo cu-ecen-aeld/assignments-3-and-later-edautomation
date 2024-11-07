@@ -31,6 +31,9 @@ static struct aesd_buffer_entry* find_entry_offset_for_fpos(struct aesd_circular
                                                             uint8_t start_index, uint8_t end_index,
                                                             size_t* p_char_offset, size_t* entry_offset_byte_rtn)
 {
+    struct aesd_buffer_entry* entry = NULL;
+    uint8_t i = start_index;
+
     if ((end_index < start_index) ||
         (NULL == p_char_offset) ||
         (end_index >= AESDCHAR_MAX_WRITE_OPERATIONS_SUPPORTED))
@@ -39,8 +42,6 @@ static struct aesd_buffer_entry* find_entry_offset_for_fpos(struct aesd_circular
         return NULL;
     }
 
-    struct aesd_buffer_entry* entry = NULL;
-    uint8_t i = start_index;
     while ((i <= end_index) && (*p_char_offset > (buffer->entry[i].size - 1)))
     {
         PRINT("CIRCULAR_BUFFER: Offset too big %lu > %lu, substracting %lu\n", *p_char_offset, buffer->entry[i].size - 1, buffer->entry[i].size);
@@ -77,6 +78,8 @@ struct aesd_buffer_entry* aesd_circular_buffer_find_entry_offset_for_fpos(struct
     /**
      * TODO: implement per description
      */
+
+    struct aesd_buffer_entry* entry = NULL;
     if ((NULL == buffer) || (NULL == entry_offset_byte_rtn))
     {
         PRINT("CIRCULAR_BUFFER: Invalid inputs\n");
@@ -85,7 +88,6 @@ struct aesd_buffer_entry* aesd_circular_buffer_find_entry_offset_for_fpos(struct
 
     PRINT("CIRCULAR_BUFFER: Searching for entry at char_offset %lu\n", char_offset);
 
-    struct aesd_buffer_entry* entry = NULL;
     if (buffer->in_offs == buffer->out_offs)
     {
         PRINT("CIRCULAR_BUFFER: in==out==%u\n", buffer->in_offs);
@@ -153,23 +155,14 @@ char* aesd_circular_buffer_add_entry(struct aesd_circular_buffer* buffer, const 
 
     // Add entry and increment (with wrap) in pointer
 
-    PRINT("CIRCULAR_BUFFER: Adding entry at in=%u with size %lu\n", buffer->in_offs, add_entry->size);
-    buffer->entry[buffer->in_offs] = *add_entry;
-    buffer->in_offs++;
-    if (buffer->in_offs > BUFFER_END_INDEX)
-    {
-        PRINT("CIRCULAR_BUFFER: Wrapping input offset\n");
-        buffer->in_offs = 0;
-    }
-
     // Check buffer full and overwrites
-    if ((buffer->in_offs > buffer->out_offs) && buffer->full)
+    if ((buffer->in_offs == buffer->out_offs) && buffer->full)
     {
         PRINT("CIRCULAR_BUFFER: Overwriting\n");
         retval = buffer->entry[buffer->out_offs].buffptr;  // Memory to be freed
         buffer->out_offs++;                                // Move read pointer
     }
-    else if (buffer->in_offs == buffer->out_offs)
+    else if (buffer->in_offs == (buffer->out_offs - 1))
     {
         PRINT("CIRCULAR_BUFFER: Buffer full\n");
         buffer->full = true;
@@ -178,6 +171,15 @@ char* aesd_circular_buffer_add_entry(struct aesd_circular_buffer* buffer, const 
     {
         PRINT("CIRCULAR_BUFFER: Normal write\n");
         buffer->full = false;
+    }
+
+    PRINT("CIRCULAR_BUFFER: Adding entry at in=%u with size %lu\n", buffer->in_offs, add_entry->size);
+    buffer->entry[buffer->in_offs] = *add_entry;
+    buffer->in_offs++;
+    if (buffer->in_offs > BUFFER_END_INDEX)
+    {
+        PRINT("CIRCULAR_BUFFER: Wrapping input offset\n");
+        buffer->in_offs = 0;
     }
 
     PRINT("CIRCULAR BUFFER: Indexes for next add are in=%u, out=%u\n", buffer->in_offs, buffer->out_offs);

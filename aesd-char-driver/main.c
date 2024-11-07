@@ -29,6 +29,8 @@ struct aesd_dev aesd_device;
 
 int aesd_open(struct inode* inode, struct file* filp)
 {
+    struct aesd_dev* dev = NULL;
+
     PDEBUG("open");
     /**
      * TODO: handle open
@@ -40,8 +42,6 @@ int aesd_open(struct inode* inode, struct file* filp)
     // NOTE: struct file represents a file descriptor, whereas struct inode represents the file
     // itself => there can be multiple struct file representing multiple open descriptors
     // on a single file, but they all point to the same inode structure.
-
-    struct aesd_dev* dev = NULL;
     dev = container_of(inode->i_cdev, struct aesd_dev, cdev);
     filp->private_data = dev;  // store a pointer to our global device
 
@@ -63,18 +63,21 @@ ssize_t aesd_read(struct file* filp, char __user* buf, size_t count,
                   loff_t* f_pos)
 {
     ssize_t retval = 0;
+    struct aesd_dev* dev = NULL;
+    struct aesd_circular_buffer* circ_buffer = NULL;
+    struct aesd_buffer_entry* entry = NULL;
+    size_t offset_in_entry = 0;
+
     PDEBUG("read %zu bytes with offset %lld", count, *f_pos);
     /**
      * TODO: handle read
      */
 
     // Get pointer to our circular buffer
-    struct aesd_dev* dev = filp->private_data;
-    struct aesd_circular_buffer* circ_buffer = &dev->circ_buffer;
+    dev = filp->private_data;
+    circ_buffer = &dev->circ_buffer;
 
     // Read from circular buffer
-    struct aesd_buffer_entry* entry = NULL;
-    size_t offset_in_entry = 0;
     entry = aesd_circular_buffer_find_entry_offset_for_fpos(circ_buffer, *f_pos, &offset_in_entry);
     if (NULL != entry)
     {
@@ -118,17 +121,21 @@ ssize_t aesd_write(struct file* filp, const char __user* buf, size_t count,
                    loff_t* f_pos)
 {
     ssize_t retval = -ENOMEM;
+    struct aesd_dev* dev;
+    struct aesd_circular_buffer* circ_buffer;
+    char* kbuffer = NULL;
+
     PDEBUG("write %zu bytes with offset %lld", count, *f_pos);
     /**
      * TODO: handle write
      */
 
     // Get circular buffer
-    struct aesd_dev* dev = filp->private_data;
-    struct aesd_circular_buffer* circ_buffer = &dev->circ_buffer;
+    dev = filp->private_data;
+    circ_buffer = &dev->circ_buffer;
 
     // Allocate memory for new entry
-    char* kbuffer = kmalloc(count, GFP_KERNEL);
+    kbuffer = kmalloc(count, GFP_KERNEL);
     if (NULL != kbuffer)
     {
         // Add new entry to circular buffer
@@ -139,8 +146,14 @@ ssize_t aesd_write(struct file* filp, const char __user* buf, size_t count,
         char* memory_to_free = aesd_circular_buffer_add_entry(circ_buffer, &new_entry);
         if (memory_to_free)
         {
+            PDEBUG("Freeing memory for kicked out entry.");
             kfree(memory_to_free);
         }
+        retval = count;
+    }
+    else
+    {
+        PDEBUG("cannot allocate memory!");
     }
 
     return retval;
@@ -199,18 +212,19 @@ int aesd_init_module(void)
 void aesd_cleanup_module(void)
 {
     dev_t devno = MKDEV(aesd_major, aesd_minor);
+    uint8_t index = 0;
 
     cdev_del(&aesd_device.cdev);
 
     /**
      * TODO: cleanup AESD specific portions here as necessary
      */
-    uint8_t index;
     for (index = 0; index < AESDCHAR_MAX_WRITE_OPERATIONS_SUPPORTED; index++)
     {
         char* mem = aesd_device.circ_buffer.entry[index].buffptr;
         if (NULL != mem)
         {
+            PDEBUG("freeing memory");
             kfree(mem);
         }
     }
