@@ -22,7 +22,6 @@
 static const char* tmp_file = "/var/tmp/aesdsocketdata";
 
 static int sfd = -1;  // Socket file descriptor
-static int wfd = -1;  // Write temporary file descriptor
 
 static struct addrinfo* addr = NULL;
 
@@ -74,7 +73,6 @@ void cleanup_and_free_thread_data(struct thread_data_t* thread_data)
 static inline void close_files(void)
 {
     close(sfd);
-    close(wfd);
 }
 
 static inline void cleanup_memory(void)
@@ -125,12 +123,18 @@ static int read_safe(int fd, void* buffer, size_t n_bytes)
     return res;
 }
 
-static int write_safe(int fd, void* buffer, size_t n_bytes)
+static int write_safe(void* buffer, size_t n_bytes)
 {
     pthread_mutex_lock(&file_mutex);
-    int res = write(fd, buffer, n_bytes);
+    int retval = -1;
+    int wfd = open(tmp_file, O_APPEND | O_WRONLY);
+    if (wfd > 0)
+    {
+        retval = write(wfd, buffer, n_bytes);
+        close(wfd);
+    }
     pthread_mutex_unlock(&file_mutex);
-    return res;
+    return retval;
 }
 
 static void start_daemon_if_needed(int argc, char* argv[])
@@ -173,17 +177,6 @@ static void handle_signal(int signal)
         printf("\nGot SIGINT or SIGTERM\n");
         syslog(LOG_INFO, "Caught SIGINT or SIGTERM, exiting");
         terminate_normally();
-    }
-}
-
-static void create_log_file(const char* tmp_file)
-{
-    wfd = creat(tmp_file, 0644);
-    if (-1 == wfd)
-    {
-        syslog(LOG_ERR, "Could not create tmp file");
-        printf("Got stop signal\n");
-        terminate_with_error();
     }
 }
 
@@ -332,7 +325,7 @@ static void write_received_data_to_file(int conn_fd, struct conn_data_t* p_conn_
                 eol_ptr[1] = '\0';  // for string length
                 size_t str_len = strlen(p_conn_data->buffer);
                 printf("Read %lu bytes until end of line\n", str_len);
-                if (-1 == write_safe(wfd, p_conn_data->buffer, str_len))
+                if (-1 == write_safe(p_conn_data->buffer, str_len))
                 {
                     syslog(LOG_ERR, "Could not write to tmp file");
                     terminate_with_error();
@@ -343,7 +336,7 @@ static void write_received_data_to_file(int conn_fd, struct conn_data_t* p_conn_
             else
             {
                 // No newline -> packet not finished -> write entire buffer to file
-                if (-1 == write_safe(wfd, p_conn_data->buffer, len))
+                if (-1 == write_safe(p_conn_data->buffer, len))
                 {
                     syslog(LOG_ERR, "Could not write to tmp file");
                     terminate_with_error();
@@ -365,7 +358,6 @@ static void send_back_entire_file(const char* tmp_file, int conn_fd)
         syslog(LOG_ERR, "Could not open tmp file for reading");
         return;
     }
-
     char* buffer = malloc(sizeof(char) * BUFFER_SIZE);
     if (NULL == buffer)
     {
@@ -433,7 +425,7 @@ static void* worker_thread(void* thread_param)
     send_back_entire_file(tmp_file, params->fd);
 
     // Write stream content coming after the newline to the file
-    if (-1 == write_safe(wfd, params->p_data->tmp_buffer, strlen(params->p_data->tmp_buffer)))
+    if (-1 == write_safe(params->p_data->tmp_buffer, strlen(params->p_data->tmp_buffer)))
     {
         syslog(LOG_ERR, "Could not write to tmp file");
         terminate_with_error();
@@ -459,7 +451,7 @@ void update_timestamp(int signum)
         strftime(buffer, sizeof(buffer), "timestamp:%a, %d %b %Y %H:%M:%S %z\n", tm_info);
 
         printf("Writing time to file : %s", buffer);
-        if (-1 == write_safe(wfd, buffer, strlen(buffer)))
+        if (-1 == write_safe(buffer, strlen(buffer)))
         {
             syslog(LOG_ERR, "Could not write timestamp to file");
             terminate_with_error();
@@ -511,13 +503,23 @@ int main(int argc, char* argv[])
     signal(SIGTERM, handle_signal);
 
     openlog("aesdsocketsyslog", 0, LOG_USER);
-    create_log_file(tmp_file);
+
+    int fd = creat(tmp_file, 0644);
+    if (fd < 0)
+    {
+        printf("Could not create tmp file\n");
+        terminate_with_error();
+    }
+    else
+    {
+        close(fd);
+    }
 
     get_server_address_and_bind();
 
     start_daemon_if_needed(argc, argv);
 
-    setup_and_start_timer();
+    // setup_and_start_timer();
 
     // Listen for connection on the socket
     if (-1 == listen(sfd, 42))
