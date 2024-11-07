@@ -1,7 +1,6 @@
-
-
 CC ?= $(CROSS_COMPILE)gcc
-CFLAGS ?= -Wall
+CHAR_DRIVER ?= 1
+CFLAGS ?= -Wall -DUSE_AESD_CHAR_DEVICE=$(CHAR_DRIVER)
 LDFLAGS ?= -lpthread -lrt
 SRC = $(wildcard *.c)
 OBJ = $(SRC:.c=.o)

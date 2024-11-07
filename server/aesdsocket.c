@@ -22,7 +22,7 @@
 #if 1 != USE_AESD_CHAR_DEVICE
 static const char* tmp_file = "/var/tmp/aesdsocketdata";
 #else
-static const char* tmp_file = "dev/aesdchar"
+static const char* tmp_file = "/dev/aesdchar";
 #endif
 
 static int sfd = -1;  // Socket file descriptor
@@ -136,6 +136,10 @@ static int write_safe(void* buffer, size_t n_bytes)
     {
         retval = write(wfd, buffer, n_bytes);
         close(wfd);
+    }
+    else
+    {
+        perror("Could not open file for write");
     }
     pthread_mutex_unlock(&file_mutex);
     return retval;
@@ -359,7 +363,7 @@ static void send_back_entire_file(const char* tmp_file, int conn_fd)
     int read_fd = open(tmp_file, O_RDONLY);
     if (-1 == read_fd)
     {
-        syslog(LOG_ERR, "Could not open tmp file for reading");
+        printf("Could not open tmp file for reading\n");
         return;
     }
     char* buffer = malloc(sizeof(char) * BUFFER_SIZE);
@@ -374,7 +378,6 @@ static void send_back_entire_file(const char* tmp_file, int conn_fd)
         int rd_len = read_safe(read_fd, buffer, BUFFER_SIZE);
         if (-1 == rd_len)
         {
-            syslog(LOG_ERR, "Error reading from tmp file");
             printf("Error reading from tmp file\n");
             free(buffer);
             close(read_fd);
