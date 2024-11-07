@@ -147,6 +147,11 @@ ssize_t aesd_write(struct file* filp, const char __user* buf, size_t count,
         return -ERESTARTSYS;
     }
 
+    if (0 == count)
+    {
+        return 0;
+    }
+
     PDEBUG("write %zu bytes with offset %lld", count, *f_pos);
 
     // Allocate memory for new entry
