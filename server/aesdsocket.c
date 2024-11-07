@@ -19,7 +19,11 @@
 #define BUFFER_SIZE 1024
 #define BURST_SIZE  (BUFFER_SIZE - 1)
 
+#if 1 != USE_AESD_CHAR_DEVICE
 static const char* tmp_file = "/var/tmp/aesdsocketdata";
+#else
+static const char* tmp_file = "dev/aesdchar"
+#endif
 
 static int sfd = -1;  // Socket file descriptor
 
@@ -438,6 +442,7 @@ static void* worker_thread(void* thread_param)
     return thread_param;
 }
 
+#if 1 != USE_AESD_CHAR_DEVICE
 void update_timestamp(int signum)
 {
     if (SIGRTMIN == signum)
@@ -496,6 +501,7 @@ static void setup_and_start_timer(void)
         terminate_with_error();
     }
 }
+#endif
 
 int main(int argc, char* argv[])
 {
@@ -503,6 +509,13 @@ int main(int argc, char* argv[])
     signal(SIGTERM, handle_signal);
 
     openlog("aesdsocketsyslog", 0, LOG_USER);
+
+    get_server_address_and_bind();
+
+    start_daemon_if_needed(argc, argv);
+
+#if 1 != USE_AESD_CHAR_DEVICE
+    setup_and_start_timer();
 
     int fd = creat(tmp_file, 0644);
     if (fd < 0)
@@ -514,12 +527,7 @@ int main(int argc, char* argv[])
     {
         close(fd);
     }
-
-    get_server_address_and_bind();
-
-    start_daemon_if_needed(argc, argv);
-
-    // setup_and_start_timer();
+#endif
 
     // Listen for connection on the socket
     if (-1 == listen(sfd, 42))
