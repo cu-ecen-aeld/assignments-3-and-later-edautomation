@@ -153,33 +153,27 @@ char* aesd_circular_buffer_add_entry(struct aesd_circular_buffer* buffer, const 
         return retval;
     }
 
-    // Add entry and increment (with wrap) in pointer
-
-    // Check buffer full and overwrites
-    if ((buffer->in_offs == buffer->out_offs) && buffer->full)
+    // When buffer full, return memory of entry to be replaced
+    if (buffer->full)
     {
-        PRINT("CIRCULAR_BUFFER: Overwriting\n");
+        PRINT("CIRCULAR_BUFFER: Buffer full, overwriting\n");
         retval = buffer->entry[buffer->out_offs].buffptr;  // Memory to be freed
         buffer->out_offs++;                                // Move read pointer
     }
-    else if (buffer->in_offs == (buffer->out_offs - 1))
+
+    // Add new entry
+    PRINT("CIRCULAR_BUFFER: Adding entry at in=%u with size %lu\n", buffer->in_offs, add_entry->size);
+    buffer->entry[buffer->in_offs] = *add_entry;
+    buffer->in_offs = (buffer->in_offs + 1) % AESDCHAR_MAX_WRITE_OPERATIONS_SUPPORTED;
+
+    // write catches read -> buffer full
+    if (buffer->in_offs == buffer->out_offs)
     {
-        PRINT("CIRCULAR_BUFFER: Buffer full\n");
         buffer->full = true;
     }
     else
     {
-        PRINT("CIRCULAR_BUFFER: Normal write\n");
         buffer->full = false;
-    }
-
-    PRINT("CIRCULAR_BUFFER: Adding entry at in=%u with size %lu\n", buffer->in_offs, add_entry->size);
-    buffer->entry[buffer->in_offs] = *add_entry;
-    buffer->in_offs++;
-    if (buffer->in_offs > BUFFER_END_INDEX)
-    {
-        PRINT("CIRCULAR_BUFFER: Wrapping input offset\n");
-        buffer->in_offs = 0;
     }
 
     PRINT("CIRCULAR BUFFER: Indexes for next add are in=%u, out=%u\n", buffer->in_offs, buffer->out_offs);

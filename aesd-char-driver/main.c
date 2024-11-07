@@ -96,11 +96,13 @@ ssize_t aesd_read(struct file* filp, char __user* buf, size_t count,
             int res = copy_to_user(buf, &entry->buffptr[offset_in_entry], read_len);
             if (res)
             {
+                PDEBUG("Could not copy memory to user space!");
                 retval = -EFAULT;
                 goto out;
             }
             else
             {
+                PDEBUG("Writing %lu bytes to user space, new position is %llu", read_len, *f_pos + read_len);
                 retval = read_len;           // # of bytes actually read
                 *f_pos = *f_pos + read_len;  // update the position in the "file"
             }
