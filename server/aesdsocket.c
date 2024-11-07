@@ -55,6 +55,7 @@ struct thread_data_t* get_new_thread_data(void)
     struct thread_data_t* new_entry = malloc(sizeof(struct thread_data_t));
     new_entry->p_data = new_data;
     new_entry->is_done = false;
+    new_entry->next = NULL;
     return new_entry;
 }
 
@@ -551,9 +552,12 @@ int main(int argc, char* argv[])
         {
             if (NULL != head)
             {
+                printf("Already a head\n");
                 new_thread_data->next = head;
             }
             head = new_thread_data;
+
+            printf("Updated head\n");
 
             struct thread_data_t* previous = NULL;
             struct thread_data_t* current = head;
@@ -578,6 +582,7 @@ int main(int argc, char* argv[])
                 }
                 else
                 {
+                    printf("not finished\n");
                     previous = current;
                     current = current->next;
                 }
