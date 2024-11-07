@@ -17,6 +17,7 @@
 #include <linux/module.h>
 #include <linux/printk.h>
 #include <linux/slab.h>
+#include <linux/string.h>
 #include <linux/types.h>
 
 #include "aesdchar.h"
@@ -131,6 +132,7 @@ ssize_t aesd_write(struct file* filp, const char __user* buf, size_t count,
     struct aesd_dev* dev;
     struct aesd_circular_buffer* circ_buffer;
     char* kbuffer = NULL;
+    char* entry_to_free = NULL;
 
     /**
      * TODO: handle write
@@ -161,11 +163,65 @@ ssize_t aesd_write(struct file* filp, const char __user* buf, size_t count,
         }
         else
         {
-            char* memory_to_free = aesd_circular_buffer_add_entry(circ_buffer, &new_entry);
-            if (memory_to_free)
+            // Check if the new entry contains a new line
+            bool is_new_line = false;
+            size_t i = 0;
+            for (i = 0; i < count; i++)
+            {
+                if (new_entry.buffptr[i] == '\n')
+                {
+                    is_new_line = true;
+                    break;
+                }
+            }
+
+            // Is there already data temporarily stored?
+            if (NULL == dev->tmp_entry.buffptr)
+            {
+                // NO -> copy only if no new line
+                if (!is_new_line)
+                {
+                    dev->tmp_entry = new_entry;
+                }
+                else
+                {
+                    // New line, no tmp data -> add to buffer right away
+                    entry_to_free = aesd_circular_buffer_add_entry(circ_buffer, &new_entry);
+                }
+            }
+            else
+            {
+                // YES -> append data to tmp entry
+                char* new_buff = krealloc(dev->tmp_entry.buffptr, dev->tmp_entry.size + count, GFP_KERNEL);
+                if (NULL == new_buff)
+                {
+                    retval = -ENOMEM;
+                    goto out;
+                }
+                else
+                {
+                    size_t i = 0;
+                    for (i = 0; i < count; i++)
+                    {
+                        dev->tmp_entry.buffptr[dev->tmp_entry.size + i] = new_entry.buffptr[i];
+                    }
+                    dev->tmp_entry.size += count;
+                    kfree(new_entry.buffptr);  // New entry will not be written to the buffer -> free it
+                }
+
+                // New line -> add tmp entry containing all past and new data to buffer, reset tmp
+                if (is_new_line)
+                {
+                    entry_to_free = aesd_circular_buffer_add_entry(circ_buffer, &dev->tmp_entry);
+                    dev->tmp_entry.buffptr = NULL;
+                    // Memory will be freed when circular buffer is cleaned up
+                }
+            }
+
+            if (entry_to_free)
             {
                 PDEBUG("Freeing memory for kicked out entry.");
-                kfree(memory_to_free);
+                kfree(entry_to_free);
             }
             retval = count;
         }
@@ -175,6 +231,7 @@ ssize_t aesd_write(struct file* filp, const char __user* buf, size_t count,
         PDEBUG("Cannot allocate memory!");
     }
 
+out:
     mutex_unlock(&dev->lock);
     return retval;
 }
