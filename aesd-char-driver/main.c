@@ -145,17 +145,24 @@ ssize_t aesd_write(struct file* filp, const char __user* buf, size_t count,
             .size = count,
             .buffptr = kbuffer,
         };
-        char* memory_to_free = aesd_circular_buffer_add_entry(circ_buffer, &new_entry);
-        if (memory_to_free)
+        if (copy_from_user(new_entry.buffptr, buf, count))
         {
-            PDEBUG("Freeing memory for kicked out entry.");
-            kfree(memory_to_free);
+            PDEBUG("Could not copy from user space!");
         }
-        retval = count;
+        else
+        {
+            char* memory_to_free = aesd_circular_buffer_add_entry(circ_buffer, &new_entry);
+            if (memory_to_free)
+            {
+                PDEBUG("Freeing memory for kicked out entry.");
+                kfree(memory_to_free);
+            }
+            retval = count;
+        }
     }
     else
     {
-        PDEBUG("cannot allocate memory!");
+        PDEBUG("Cannot allocate memory!");
     }
 
     return retval;
