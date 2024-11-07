@@ -18,6 +18,7 @@
 #include <linux/printk.h>
 #include <linux/slab.h>
 #include <linux/types.h>
+
 #include "aesdchar.h"
 int aesd_major = 0;  // use dynamic major
 int aesd_minor = 0;
@@ -44,6 +45,7 @@ int aesd_open(struct inode* inode, struct file* filp)
     // on a single file, but they all point to the same inode structure.
     dev = container_of(inode->i_cdev, struct aesd_dev, cdev);
     filp->private_data = dev;  // store a pointer to our global device
+    mutex_init(&dev->lock);
 
     return 0;
 }
@@ -67,8 +69,6 @@ ssize_t aesd_read(struct file* filp, char __user* buf, size_t count,
     struct aesd_circular_buffer* circ_buffer = NULL;
     struct aesd_buffer_entry* entry = NULL;
     size_t offset_in_entry = 0;
-
-    PDEBUG("read %zu bytes with offset %lld", count, *f_pos);
     /**
      * TODO: handle read
      */
@@ -76,6 +76,13 @@ ssize_t aesd_read(struct file* filp, char __user* buf, size_t count,
     // Get pointer to our circular buffer
     dev = filp->private_data;
     circ_buffer = &dev->circ_buffer;
+
+    if (mutex_lock_interruptible(&dev->lock))
+    {
+        return -ERESTARTSYS;
+    }
+
+    PDEBUG("read %zu bytes with offset %lld", count, *f_pos);
 
     // Read from circular buffer
     entry = aesd_circular_buffer_find_entry_offset_for_fpos(circ_buffer, *f_pos, &offset_in_entry);
@@ -98,7 +105,6 @@ ssize_t aesd_read(struct file* filp, char __user* buf, size_t count,
             {
                 PDEBUG("Could not copy memory to user space!");
                 retval = -EFAULT;
-                goto out;
             }
             else
             {
@@ -114,8 +120,7 @@ ssize_t aesd_read(struct file* filp, char __user* buf, size_t count,
         }
     }
 
-out:
-    // todo: unlock if needed
+    mutex_unlock(&dev->lock);
     return retval;
 }
 
@@ -127,7 +132,6 @@ ssize_t aesd_write(struct file* filp, const char __user* buf, size_t count,
     struct aesd_circular_buffer* circ_buffer;
     char* kbuffer = NULL;
 
-    PDEBUG("write %zu bytes with offset %lld", count, *f_pos);
     /**
      * TODO: handle write
      */
@@ -135,6 +139,12 @@ ssize_t aesd_write(struct file* filp, const char __user* buf, size_t count,
     // Get circular buffer
     dev = filp->private_data;
     circ_buffer = &dev->circ_buffer;
+    if (mutex_lock_interruptible(&dev->lock))
+    {
+        return -ERESTARTSYS;
+    }
+
+    PDEBUG("write %zu bytes with offset %lld", count, *f_pos);
 
     // Allocate memory for new entry
     kbuffer = kmalloc(count, GFP_KERNEL);
@@ -165,6 +175,7 @@ ssize_t aesd_write(struct file* filp, const char __user* buf, size_t count,
         PDEBUG("Cannot allocate memory!");
     }
 
+    mutex_unlock(&dev->lock);
     return retval;
 }
 struct file_operations aesd_fops = {
