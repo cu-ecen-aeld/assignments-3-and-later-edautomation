@@ -20,7 +20,9 @@
 #include <linux/string.h>
 #include <linux/types.h>
 
+#include "aesd_ioctl.h"
 #include "aesdchar.h"
+
 int aesd_major = 0;  // use dynamic major
 int aesd_minor = 0;
 
@@ -268,11 +270,63 @@ out:
     return retval;
 }
 
+ssize_t aesd_ioctl(struct file* filp, unsigned int cmd, unsigned long arg)
+{
+    uint8_t i = 0;
+    uint32_t start_offset = 0;
+    uint32_t buffer_size = 0;
+    struct aesd_seekto seekto;
+    struct aesd_dev* dev = filp->private_data;
+    struct aesd_circular_buffer* circ_buffer = &dev->circ_buffer;
+
+    // Check if command is supported
+    if (AESDCHAR_IOCSEEKTO != cmd)
+    {
+        return -ENOTTY;
+    }
+
+    // We are working in the kernel space -> need to copy memory
+    if (copy_from_user(&seekto, (void __user*)arg, sizeof(seekto)))
+    {
+        return -EFAULT;
+    }
+
+    // Command id sanity check
+    if (seekto.write_cmd >= AESDCHAR_MAX_WRITE_OPERATIONS_SUPPORTED)
+    {
+        return -EINVAL;
+    }
+
+    // Offset sanity check
+    for (i = 0; i < AESDCHAR_MAX_WRITE_OPERATIONS_SUPPORTED; i++)
+    {
+        buffer_size += circ_buffer->entry[i].size;
+    }
+    if (seekto.write_cmd_offset >= buffer_size)
+    {
+        return -EINVAL;
+    }
+
+    // Get array index of command
+    for (i = 0; i < seekto.write_cmd; i++)
+    {
+        uint32_t entry_index = (circ_buffer->out_offs + i) % AESDCHAR_MAX_WRITE_OPERATIONS_SUPPORTED;
+        start_offset += circ_buffer->entry[entry_index].size;
+    }
+
+    // Update file position with offset within the command
+    filp->f_pos = start_offset + seekto.write_cmd_offset;
+    PDEBUG("Seek to command %u, offset %u, new position %lld\n", seekto.write_cmd, seekto.write_cmd_offset, filp->f_pos);
+
+    return 0;
+}
+
 struct file_operations aesd_fops = {
     .owner = THIS_MODULE,
     .read = aesd_read,
     .write = aesd_write,
     .llseek = aesd_seek,
+    .unlocked_ioctl = aesd_ioctl,
     .open = aesd_open,
     .release = aesd_release,
 };
