@@ -12,9 +12,12 @@
 #include <netdb.h>
 #include <pthread.h>
 #include <signal.h>
+#include <sys/ioctl.h>
 #include <sys/queue.h>
 #include <sys/socket.h>
 #include <sys/types.h>
+
+#include "../aesd-char-driver/aesd_ioctl.h"
 
 #define BUFFER_SIZE 1024
 #define BURST_SIZE  (BUFFER_SIZE - 1)
@@ -35,6 +38,13 @@ struct conn_data_t
 {
     char buffer[BUFFER_SIZE];      // Used to store the data read from a socket
     char tmp_buffer[BUFFER_SIZE];  // Used to store data from a packet after a new line
+};
+
+struct seekto_t
+{
+    bool valid;
+    uint32_t cmd;
+    uint32_t off;
 };
 
 struct thread_data_t
@@ -289,12 +299,14 @@ static bool wait_for_connection(int* conn_fd)
     return true;
 }
 
-static void write_received_data_to_file(int conn_fd, struct conn_data_t* p_conn_data)
+static struct seekto_t write_received_data_to_file(int conn_fd, struct conn_data_t* p_conn_data)
 {
+    struct seekto_t seekto = {false, 0, 0};
+
     if (NULL == p_conn_data)
     {
         syslog(LOG_ERR, "NULL passed to write_received_data_to_file");
-        return;
+        return seekto;
     }
 
     // Setup buffer to receive data
@@ -324,30 +336,60 @@ static void write_received_data_to_file(int conn_fd, struct conn_data_t* p_conn_
             {
                 printf("Got new line!\n");
 
-                // Copy remaining bytes to the buffer so they are not lost
+                // Get entire string
+                size_t tmp_len = strlen(p_conn_data->tmp_buffer);
+                size_t buf_len = strlen(p_conn_data->buffer);
+                char* complete_cmd = malloc(tmp_len + buf_len);
+                if (NULL == complete_cmd)
+                {
+                    printf("Could not allocate memory\n");
+                    terminate_with_error();
+                }
+                strcpy(complete_cmd, p_conn_data->tmp_buffer);
+                memset(p_conn_data->tmp_buffer, 0, sizeof(p_conn_data->tmp_buffer));
+
+                // From now on, we can use tmp buffer again
+                // Copy remaining bytes to the tmp buffer so they are not lost
                 // Safe to use strcpy because we added \0 to the end of the data buffer
                 char* remaining_string = &eol_ptr[1];
                 strcpy(p_conn_data->tmp_buffer, remaining_string);
 
-                // Write the bytes up to the newline to the file
-                eol_ptr[1] = '\0';  // for string length
-                size_t str_len = strlen(p_conn_data->buffer);
-                printf("Read %lu bytes until end of line\n", str_len);
-                if (-1 == write_safe(p_conn_data->buffer, str_len))
-                {
-                    syslog(LOG_ERR, "Could not write to tmp file");
-                    terminate_with_error();
-                }
+                // Write the bytes up to the newline to the complete string
+                eol_ptr[1] = '\0';  // for string concatenation
+                strcat(complete_cmd, p_conn_data->buffer);
 
+                // Check if seekto cmd
+                if (sscanf(complete_cmd, "AESDCHAR_IOCSEEKTO:%u,%u\n", &seekto.cmd, &seekto.off))
+                {
+                    printf("Got seek-to command with cmd %u and offset %u\n", seekto.cmd, seekto.off);
+                    seekto.valid = true;
+                }
+                else
+                {
+                    printf("Did not get seek-to command, writing command to file\n");
+                    seekto.valid = false;
+                    size_t str_len = strlen(complete_cmd);
+                    if (-1 == write_safe(complete_cmd, str_len))
+                    {
+                        printf("Could not write to tmp file\n");
+                        free(complete_cmd);
+                        terminate_with_error();
+                    }
+                }
+                free(complete_cmd);
                 did_find_eol = true;
             }
             else
             {
-                // No newline -> packet not finished -> write entire buffer to file
-                if (-1 == write_safe(p_conn_data->buffer, len))
+                // No newline -> packet not finished -> write entire buffer to tmp buffer
+                size_t full_data_len = strlen(p_conn_data->tmp_buffer) + strlen(p_conn_data->buffer);
+                if (full_data_len > BUFFER_SIZE)
                 {
-                    syslog(LOG_ERR, "Could not write to tmp file");
-                    terminate_with_error();
+                    printf("WARNING: Too much data, dropping it!!");
+                }
+                else
+                {
+                    strcat(p_conn_data->tmp_buffer, p_conn_data->buffer);
                 }
             }
         }
@@ -356,9 +398,11 @@ static void write_received_data_to_file(int conn_fd, struct conn_data_t* p_conn_
             // Try again in the next loop execution
         }
     }
+
+    return seekto;
 }
 
-static void send_back_entire_file(const char* tmp_file, int conn_fd)
+static void send_back_entire_file(struct seekto_t seekto, const char* tmp_file, int conn_fd)
 {
     int read_fd = open(tmp_file, O_RDONLY);
     if (-1 == read_fd)
@@ -371,6 +415,15 @@ static void send_back_entire_file(const char* tmp_file, int conn_fd)
     {
         syslog(LOG_ERR, "Could not allocate memory in send_back_entire_file");
         return;
+    }
+
+    if (seekto.valid)
+    {
+        struct aesd_seekto arg = {seekto.cmd, seekto.off};
+        if (ioctl(read_fd, AESDCHAR_IOCSEEKTO, &arg))
+        {
+            printf("Error calling ioctl on file descriptor %d\n", read_fd);
+        }
     }
 
     while (true)
@@ -428,15 +481,8 @@ static void* worker_thread(void* thread_param)
 
     printf("Starting worker thread with id %ld...\n", params->thread_id);
 
-    write_received_data_to_file(params->fd, params->p_data);
-    send_back_entire_file(tmp_file, params->fd);
-
-    // Write stream content coming after the newline to the file
-    if (-1 == write_safe(params->p_data->tmp_buffer, strlen(params->p_data->tmp_buffer)))
-    {
-        syslog(LOG_ERR, "Could not write to tmp file");
-        terminate_with_error();
-    }
+    struct seekto_t seekto = write_received_data_to_file(params->fd, params->p_data);
+    send_back_entire_file(seekto, tmp_file, params->fd);
 
     params->is_done = true;
 
@@ -445,7 +491,7 @@ static void* worker_thread(void* thread_param)
     return thread_param;
 }
 
-#ifdef USE_AESD_CHAR_DEVICE
+#ifndef USE_AESD_CHAR_DEVICE
 void update_timestamp(int signum)
 {
     if (SIGRTMIN == signum)
@@ -517,7 +563,7 @@ int main(int argc, char* argv[])
 
     start_daemon_if_needed(argc, argv);
 
-#ifdef USE_AESD_CHAR_DEVICE
+#ifndef USE_AESD_CHAR_DEVICE
     setup_and_start_timer();
 
     int fd = creat(tmp_file, 0644);
