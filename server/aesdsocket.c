@@ -22,7 +22,7 @@
 #define BUFFER_SIZE 1024
 #define BURST_SIZE  (BUFFER_SIZE - 1)
 
-#ifdef USE_AESD_CHAR_DEVICE
+#ifndef USE_AESD_CHAR_DEVICE
 static const char* tmp_file = "/var/tmp/aesdsocketdata";
 #else
 static const char* tmp_file = "/dev/aesdchar";
@@ -65,6 +65,7 @@ struct thread_data_t* get_new_thread_data(void)
 {
     struct conn_data_t* new_data = malloc(sizeof(struct conn_data_t));
     memset((void*)new_data, 0, sizeof(new_data));
+    new_data->tmp_buffer[0] = '\0';
     struct thread_data_t* new_entry = malloc(sizeof(struct thread_data_t));
     new_entry->p_data = new_data;
     new_entry->is_done = false;
@@ -345,6 +346,10 @@ static struct seekto_t write_received_data_to_file(int conn_fd, struct conn_data
                     printf("Could not allocate memory\n");
                     terminate_with_error();
                 }
+                else
+                {
+                    printf("Allocated buffer for %lu + %lu bytes\n", tmp_len, buf_len);
+                }
                 strcpy(complete_cmd, p_conn_data->tmp_buffer);
                 memset(p_conn_data->tmp_buffer, 0, sizeof(p_conn_data->tmp_buffer));
 
@@ -564,7 +569,7 @@ int main(int argc, char* argv[])
     start_daemon_if_needed(argc, argv);
 
 #ifndef USE_AESD_CHAR_DEVICE
-    setup_and_start_timer();
+    // setup_and_start_timer();
 
     int fd = creat(tmp_file, 0644);
     if (fd < 0)
