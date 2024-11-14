@@ -36,8 +36,8 @@ static pthread_mutex_t file_mutex = PTHREAD_MUTEX_INITIALIZER;
 
 struct conn_data_t
 {
-    char buffer[BUFFER_SIZE];      // Used to store the data read from a socket
-    char tmp_buffer[BUFFER_SIZE];  // Used to store data from a packet after a new line
+    char buffer[BUFFER_SIZE];  // Used to store the data read from a socket
+    // char tmp_buffer[BUFFER_SIZE];  // Used to store data from a packet after a new line
 };
 
 struct seekto_t
@@ -65,7 +65,7 @@ struct thread_data_t* get_new_thread_data(void)
 {
     struct conn_data_t* new_data = malloc(sizeof(struct conn_data_t));
     memset((void*)new_data, 0, sizeof(new_data));
-    new_data->tmp_buffer[0] = '\0';
+    // new_data->tmp_buffer[0] = '\0';
     struct thread_data_t* new_entry = malloc(sizeof(struct thread_data_t));
     new_entry->p_data = new_data;
     new_entry->is_done = false;
@@ -337,34 +337,8 @@ static struct seekto_t write_received_data_to_file(int conn_fd, struct conn_data
             {
                 printf("Got new line!\n");
 
-                // Get entire string
-                size_t tmp_len = strlen(p_conn_data->tmp_buffer);
-                size_t buf_len = strlen(p_conn_data->buffer);
-                char* complete_cmd = malloc(tmp_len + buf_len);
-                if (NULL == complete_cmd)
-                {
-                    printf("Could not allocate memory\n");
-                    terminate_with_error();
-                }
-                else
-                {
-                    printf("Allocated buffer for %lu + %lu bytes\n", tmp_len, buf_len);
-                }
-                strcpy(complete_cmd, p_conn_data->tmp_buffer);
-                memset(p_conn_data->tmp_buffer, 0, sizeof(p_conn_data->tmp_buffer));
-
-                // From now on, we can use tmp buffer again
-                // Copy remaining bytes to the tmp buffer so they are not lost
-                // Safe to use strcpy because we added \0 to the end of the data buffer
-                char* remaining_string = &eol_ptr[1];
-                strcpy(p_conn_data->tmp_buffer, remaining_string);
-
-                // Write the bytes up to the newline to the complete string
-                eol_ptr[1] = '\0';  // for string concatenation
-                strcat(complete_cmd, p_conn_data->buffer);
-
                 // Check if seekto cmd
-                if (sscanf(complete_cmd, "AESDCHAR_IOCSEEKTO:%u,%u\n", &seekto.cmd, &seekto.off))
+                if (sscanf(p_conn_data->buffer, "AESDCHAR_IOCSEEKTO:%u,%u\n", &seekto.cmd, &seekto.off))
                 {
                     printf("Got seek-to command with cmd %u and offset %u\n", seekto.cmd, seekto.off);
                     seekto.valid = true;
@@ -373,28 +347,22 @@ static struct seekto_t write_received_data_to_file(int conn_fd, struct conn_data
                 {
                     printf("Did not get seek-to command, writing command to file\n");
                     seekto.valid = false;
-                    size_t str_len = strlen(complete_cmd);
-                    if (-1 == write_safe(complete_cmd, str_len))
+                    size_t str_len = strlen(p_conn_data->buffer);
+                    if (-1 == write_safe(p_conn_data->buffer, str_len))
                     {
                         printf("Could not write to tmp file\n");
-                        free(complete_cmd);
                         terminate_with_error();
                     }
                 }
-                free(complete_cmd);
                 did_find_eol = true;
             }
             else
             {
-                // No newline -> packet not finished -> write entire buffer to tmp buffer
-                size_t full_data_len = strlen(p_conn_data->tmp_buffer) + strlen(p_conn_data->buffer);
-                if (full_data_len > BUFFER_SIZE)
+                size_t str_len = strlen(p_conn_data->buffer);
+                if (-1 == write_safe(p_conn_data->buffer, str_len))
                 {
-                    printf("WARNING: Too much data, dropping it!!");
-                }
-                else
-                {
-                    strcat(p_conn_data->tmp_buffer, p_conn_data->buffer);
+                    printf("Could not write to tmp file\n");
+                    terminate_with_error();
                 }
             }
         }
