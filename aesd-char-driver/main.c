@@ -222,10 +222,57 @@ out:
     return retval;
 }
 
+loff_t aesd_seek(struct file* filp, loff_t offset, int whence)
+{
+    loff_t retval = 0;
+    struct aesd_dev* dev = filp->private_data;
+    struct aesd_circular_buffer* circ_buffer = &dev->circ_buffer;
+    size_t buffer_size = 0;
+    uint8_t i = 0;
+
+    if (mutex_lock_interruptible(&dev->lock))
+    {
+        return -ERESTARTSYS;
+    }
+
+    PDEBUG("seek offset %lld, whence %d", offset, whence);
+
+    for (; i < AESDCHAR_MAX_WRITE_OPERATIONS_SUPPORTED; i++)
+    {
+        buffer_size += circ_buffer->entry[i].size;
+    }
+
+    switch (whence)
+    {
+        case SEEK_SET:
+            retval = offset;
+            break;
+        case SEEK_CUR:
+            retval = filp->f_pos + offset;
+            break;
+        case SEEK_END:
+            retval = buffer_size + offset;
+            break;
+        default:
+            retval = -EINVAL;
+            goto out;
+    }
+
+    if ((retval >= buffer_size) || (retval < 0))
+    {
+        retval = -EINVAL;
+    }
+
+out:
+    mutex_unlock(&dev->lock);
+    return retval;
+}
+
 struct file_operations aesd_fops = {
     .owner = THIS_MODULE,
     .read = aesd_read,
     .write = aesd_write,
+    .llseek = aesd_seek,
     .open = aesd_open,
     .release = aesd_release,
 };
