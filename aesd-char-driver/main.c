@@ -264,6 +264,10 @@ loff_t aesd_seek(struct file* filp, loff_t offset, int whence)
     {
         retval = -EINVAL;
     }
+    else
+    {
+        filp->f_pos = retval;
+    }
 
 out:
     mutex_unlock(&dev->lock);
