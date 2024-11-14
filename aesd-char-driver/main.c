@@ -297,6 +297,12 @@ ssize_t aesd_ioctl(struct file* filp, unsigned int cmd, unsigned long arg)
         return -EINVAL;
     }
 
+    // From here on we are reading the circular buffer. Lock it so it is not modified during our reads
+    if (mutex_lock_interruptible(&dev->lock))
+    {
+        return -ERESTARTSYS;
+    }
+
     // Offset sanity check
     for (i = 0; i < AESDCHAR_MAX_WRITE_OPERATIONS_SUPPORTED; i++)
     {
@@ -304,6 +310,7 @@ ssize_t aesd_ioctl(struct file* filp, unsigned int cmd, unsigned long arg)
     }
     if (seekto.write_cmd_offset >= buffer_size)
     {
+        mutex_unlock(&dev->lock);  // Clean-up
         return -EINVAL;
     }
 
@@ -318,6 +325,7 @@ ssize_t aesd_ioctl(struct file* filp, unsigned int cmd, unsigned long arg)
     filp->f_pos = start_offset + seekto.write_cmd_offset;
     PDEBUG("Seek to command %u, offset %u, new position %lld\n", seekto.write_cmd, seekto.write_cmd_offset, filp->f_pos);
 
+    mutex_unlock(&dev->lock);  // Clean-up
     return 0;
 }
 
