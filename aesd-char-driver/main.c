@@ -135,7 +135,6 @@ ssize_t aesd_write(struct file* filp, const char __user* buf, size_t count,
     struct aesd_dev* dev;
     struct aesd_circular_buffer* circ_buffer;
     char* kbuffer = NULL;
-    char* entry_to_free = NULL;
 
     /**
      * TODO: handle write
@@ -200,23 +199,25 @@ ssize_t aesd_write(struct file* filp, const char __user* buf, size_t count,
                 dev->tmp_entry.buffptr[dev->tmp_entry.size + i] = kbuffer[i];
             }
             dev->tmp_entry.size += count;
+            kfree(kbuffer);
         }
     }
 
     // Copy to circular buffer if last received char is a new line
-    if (kbuffer[count - 1] == '\n')
+    if (dev->tmp_entry.buffptr[dev->tmp_entry.size - 1] == '\n')
     {
+        char* entry_to_free = NULL;
         PDEBUG("New line-> write to buffer");
         entry_to_free = aesd_circular_buffer_add_entry(circ_buffer, &dev->tmp_entry);
+        if (entry_to_free)
+        {
+            PDEBUG("Freeing memory for kicked out entry.");
+            kfree(entry_to_free);
+        }
         dev->tmp_entry.buffptr = NULL;  // Reset for next entry
         // Memory will be freed when circular buffer is cleaned up
     }
 
-    if (entry_to_free)
-    {
-        PDEBUG("Freeing memory for kicked out entry.");
-        kfree(entry_to_free);
-    }
     retval = count;
 
 out:

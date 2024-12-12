@@ -386,7 +386,8 @@ static void send_back_entire_file(struct seekto_t seekto, const char* tmp_file, 
     char* buffer = malloc(sizeof(char) * BUFFER_SIZE);
     if (NULL == buffer)
     {
-        syslog(LOG_ERR, "Could not allocate memory in send_back_entire_file");
+        printf("Could not allocate memory in send_back_entire_file\n");
+        close(read_fd);
         return;
     }
 
