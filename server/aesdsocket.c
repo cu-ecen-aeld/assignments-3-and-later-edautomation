@@ -132,15 +132,15 @@ static inline void terminate_with_error(void)
 
 static int read_safe(int fd, void* buffer, size_t n_bytes)
 {
-    pthread_mutex_lock(&file_mutex);
+    // pthread_mutex_lock(&file_mutex);
     int res = read(fd, buffer, n_bytes);
-    pthread_mutex_unlock(&file_mutex);
+    // pthread_mutex_unlock(&file_mutex);
     return res;
 }
 
 static int write_safe(void* buffer, size_t n_bytes)
 {
-    pthread_mutex_lock(&file_mutex);
+    // pthread_mutex_lock(&file_mutex);
     int retval = -1;
     int wfd = open(tmp_file, O_APPEND | O_WRONLY);
     if (wfd > 0)
@@ -152,7 +152,7 @@ static int write_safe(void* buffer, size_t n_bytes)
     {
         perror("Could not open file for write");
     }
-    pthread_mutex_unlock(&file_mutex);
+    // pthread_mutex_unlock(&file_mutex);
     return retval;
 }
 
@@ -540,7 +540,7 @@ int main(int argc, char* argv[])
 
 #ifndef USE_AESD_CHAR_DEVICE
     // setup_and_start_timer();
-
+    printf("Creating temporary file");
     int fd = creat(tmp_file, 0644);
     if (fd < 0)
     {

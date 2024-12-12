@@ -1,6 +1,6 @@
 CC ?= $(CROSS_COMPILE)gcc
 CHAR_DRIVER ?= USE_AESD_CHAR_DEVICE
-CFLAGS ?= -Wall -D$(CHAR_DRIVER)
+CFLAGS ?= -Wall -D$(CHAR_DRIVER) -g -O0
 LDFLAGS ?= -lpthread -lrt
 SRC = $(wildcard *.c)
 OBJ = $(SRC:.c=.o)
