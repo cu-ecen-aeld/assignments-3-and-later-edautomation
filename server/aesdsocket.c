@@ -19,7 +19,7 @@
 
 #include "../aesd-char-driver/aesd_ioctl.h"
 
-#define BUFFER_SIZE 256
+#define BUFFER_SIZE 64
 #define BURST_SIZE  (BUFFER_SIZE - 1)
 
 #ifndef USE_AESD_CHAR_DEVICE

@@ -48,7 +48,6 @@ int aesd_open(struct inode* inode, struct file* filp)
     // on a single file, but they all point to the same inode structure.
     dev = container_of(inode->i_cdev, struct aesd_dev, cdev);
     filp->private_data = dev;  // store a pointer to our global device
-    mutex_init(&dev->lock);
 
     return 0;
 }
@@ -376,6 +375,7 @@ int aesd_init_module(void)
     /**
      * TODO: initialize the AESD specific portion of the device
      */
+    mutex_init(&aesd_device.lock);
     aesd_circular_buffer_init(&aesd_device.circ_buffer);
 
     result = aesd_setup_cdev(&aesd_device);
