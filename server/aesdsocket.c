@@ -394,6 +394,7 @@ static void send_back_entire_file(struct seekto_t seekto, const char* tmp_file, 
     if (seekto.valid)
     {
         printf("Seeking to %u, %u\n", seekto.cmd, seekto.off);
+        syslog(LOG_INFO, "Seeking to %u, %u\n", seekto.cmd, seekto.off);
         struct aesd_seekto arg = {seekto.cmd, seekto.off};
         if (ioctl(read_fd, AESDCHAR_IOCSEEKTO, &arg))
         {
