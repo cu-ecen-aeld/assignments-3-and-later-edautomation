@@ -35,7 +35,8 @@ int aesd_open(struct inode* inode, struct file* filp)
 {
     struct aesd_dev* dev = NULL;
 
-    PDEBUG("open");
+    PDEBUG("Open AESD char driver");
+
     /**
      * TODO: handle open
      */
@@ -54,7 +55,7 @@ int aesd_open(struct inode* inode, struct file* filp)
 
 int aesd_release(struct inode* inode, struct file* filp)
 {
-    PDEBUG("release");
+    PDEBUG("AESD Release");
     /**
      * TODO: handle release
      */

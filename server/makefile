@@ -1,5 +1,5 @@
 CC ?= $(CROSS_COMPILE)gcc
-CFLAGS ?= -Wall -DUSE_AESD_CHAR_DEVICE -g -O0
+CFLAGS ?= -Wall -g -O0
 LDFLAGS ?= -lpthread -lrt
 SRC = $(wildcard *.c)
 OBJ = $(SRC:.c=.o)

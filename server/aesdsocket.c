@@ -19,6 +19,8 @@
 
 #include "../aesd-char-driver/aesd_ioctl.h"
 
+#define USE_AESD_CHAR_DEVICE
+
 #define BUFFER_SIZE 64
 #define BURST_SIZE  (BUFFER_SIZE - 1)
 
@@ -573,6 +575,10 @@ int main(int argc, char* argv[])
         {
             continue;
         }
+
+        printf("Got a connection, creating thread data and launching thread\n");
+        void* prog_break = sbrk(0);
+        printf("Program break: %p\n", prog_break);
 
         struct thread_data_t* new_thread_data = get_new_thread_data();
         new_thread_data->fd = conn_fd;
